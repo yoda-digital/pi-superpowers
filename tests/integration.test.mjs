@@ -167,10 +167,12 @@ describe("agent definitions", () => {
         assert.ok(fm.tools, `${agentName}.md should specify tools`);
       });
 
-      it("has a model field", () => {
+      it("model field is optional (agents inherit parent model)", () => {
         const content = readFileSync(filePath, "utf8");
         const fm = parseFrontmatter(content);
-        assert.ok(fm.model, `${agentName}.md should specify a model`);
+        // model is deliberately omitted so agents inherit the parent session's model,
+        // making them provider-agnostic (works with OpenRouter, Anthropic, etc.)
+        assert.ok(true, `${agentName}.md model field is optional`);
       });
 
       it("has body content (system prompt)", () => {

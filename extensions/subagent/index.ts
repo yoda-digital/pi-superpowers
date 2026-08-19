@@ -300,9 +300,18 @@ async function runSingleAgent(
 		};
 	}
 
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	const args: string[] = [
+		"--mode", "json", "-p", "--no-session",
+		"--no-extensions",    // Child must not load superpowers/todo/subagent — prevents context bloat
+		"--no-skills",        // Child does not need skill discovery
+		"--no-context-files", // Child does not need AGENTS.md/CLAUDE.md from project
+		"--no-themes",        // Themes are irrelevant for non-interactive JSON output
+		"--approve",          // Trust project directory for tool access (child inherits cwd)
+	];
 	const inheritsDispatchConfig = !agent.model;
-	const model = agent.model ?? dispatchDefaults.model;
+	// Agent-specified models (e.g. claude-haiku-4-5) may lack auth in this environment.
+	// Fall back to the parent session's model to prevent child exit at startup.
+	const model = (agent.model && dispatchDefaults.model) ? dispatchDefaults.model : (agent.model ?? dispatchDefaults.model);
 	if (model) args.push("--model", model);
 	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
 		args.push("--thinking", dispatchDefaults.thinkingLevel);
