@@ -1,0 +1,18 @@
+# Cloned upstream repos (for reference only, not distributed)
+upstream-superpowers/
+upstream-pi/
+
+# Junior experiment (docs only, not part of the package)
+docs/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~

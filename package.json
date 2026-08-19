@@ -1,0 +1,22 @@
+{
+  "name": "pi-superpowers",
+  "version": "1.0.0",
+  "description": "Superpowers methodology + companion tools for Pi coding agent",
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "extensions/superpowers.ts",
+      "extensions/subagent/index.ts",
+      "extensions/todo.ts"
+    ],
+    "skills": ["skills/"]
+  },
+  "files": [
+    "extensions/",
+    "agents/",
+    "references/",
+    "skills/",
+    "README.md"
+  ]
+}
