@@ -319,9 +319,11 @@ async function runSingleAgent(
 		"--no-skills",        // Child does not need skill discovery
 		"--no-context-files", // Child does not need AGENTS.md/CLAUDE.md from project
 		"--no-themes",        // Themes are irrelevant for non-interactive JSON output
+		"--no-prompt-templates", // No prompt template discovery needed
 		"--approve",          // Trust project directory for tool access (child inherits cwd)
+		"--thinking", "off",  // Disable thinking to maximize context for tool calls on local models
 	];
-	const inheritsDispatchConfig = !agent.model;
+	const inheritsDispatchConfig = false; // Child always uses explicit config, never inherits thinking
 	// Agent-specified models (e.g. claude-haiku-4-5) may lack auth in this environment.
 	// Fall back to the parent session's model to prevent child exit at startup.
 	const model = (agent.model && dispatchDefaults.model) ? dispatchDefaults.model : (agent.model ?? dispatchDefaults.model);
