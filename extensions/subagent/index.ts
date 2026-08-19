@@ -26,7 +26,6 @@ import {
 	type ExtensionAPI,
 	getAgentDir,
 	getMarkdownTheme,
-	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -252,15 +251,6 @@ async function mapWithConcurrencyLimit<TIn, TOut>(
 	return results;
 }
 
-async function writePromptToTempFile(agentName: string, prompt: string): Promise<{ dir: string; filePath: string }> {
-	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
-	const safeName = agentName.replace(/[^\w.-]+/g, "_");
-	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
-	await withFileMutationQueue(filePath, async () => {
-		await fs.promises.writeFile(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
-	});
-	return { dir: tmpDir, filePath };
-}
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
@@ -315,26 +305,18 @@ async function runSingleAgent(
 
 	const args: string[] = [
 		"--mode", "json", "-p", "--no-session",
-		"--no-extensions",    // Child must not load superpowers/todo/subagent — prevents context bloat
-		"--no-skills",        // Child does not need skill discovery
-		"--no-context-files", // Child does not need AGENTS.md/CLAUDE.md from project
-		"--no-themes",        // Themes are irrelevant for non-interactive JSON output
+		"--no-extensions",       // Child must not load superpowers/todo/subagent — prevents context bloat
+		"--no-skills",           // Child does not need skill discovery
+		"--no-context-files",    // Child does not need AGENTS.md/CLAUDE.md from project
+		"--no-themes",           // Themes are irrelevant for non-interactive JSON output
 		"--no-prompt-templates", // No prompt template discovery needed
-		"--approve",          // Trust project directory for tool access (child inherits cwd)
-		"--thinking", "off",  // Disable thinking to maximize context for tool calls on local models
+		"--approve",             // Trust project directory for tool access (child inherits cwd)
 	];
-	const inheritsDispatchConfig = false; // Child always uses explicit config, never inherits thinking
 	// Agent-specified models (e.g. claude-haiku-4-5) may lack auth in this environment.
 	// Fall back to the parent session's model to prevent child exit at startup.
 	const model = (agent.model && dispatchDefaults.model) ? dispatchDefaults.model : (agent.model ?? dispatchDefaults.model);
 	if (model) args.push("--model", model);
-	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
-		args.push("--thinking", dispatchDefaults.thinkingLevel);
-	}
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
-
-	let tmpPromptDir: string | null = null;
-	let tmpPromptPath: string | null = null;
 
 	const currentResult: SingleResult = {
 		agent: agentName,
@@ -358,14 +340,14 @@ async function runSingleAgent(
 	};
 
 	try {
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
-			tmpPromptDir = tmp.dir;
-			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
-		}
-
-		args.push(`Task: ${task}`);
+		// Embed agent role in the task text instead of --append-system-prompt.
+		// This avoids the extra system prompt overhead that degrades tool calling
+		// on local models (Qwen/Ollama). The manual test without --append-system-prompt
+		// works reliably; adding it causes non-deterministic XML tool call fallback.
+		const prompt = agent.systemPrompt.trim()
+			? `${agent.systemPrompt.trim()}\n\n---\n\nTask: ${task}`
+			: `Task: ${task}`;
+		args.push(prompt);
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
@@ -451,18 +433,6 @@ async function runSingleAgent(
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {
-		if (tmpPromptPath)
-			try {
-				fs.unlinkSync(tmpPromptPath);
-			} catch {
-				/* ignore */
-			}
-		if (tmpPromptDir)
-			try {
-				fs.rmdirSync(tmpPromptDir);
-			} catch {
-				/* ignore */
-			}
 	}
 }
 
