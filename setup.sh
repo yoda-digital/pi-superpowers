@@ -12,7 +12,7 @@ fail()  { printf '  \033[1;31m✗\033[0m %s\n' "$1"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENTS_SRC="$SCRIPT_DIR/agents"
-AGENTS_DST="$HOME/.pi/agents"
+AGENTS_DST="$HOME/.pi/agent/agents"
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 
 # ── Step 1: Verify Pi is installed ───────────────────────────────────────────
@@ -78,8 +78,8 @@ for ext in extensions/superpowers.ts extensions/subagent/index.ts extensions/tod
     fi
 done
 
-# Check that the skills directory exists (via upstream-superpowers)
-SKILLS_DIR="$SCRIPT_DIR/upstream-superpowers/skills"
+# Check that the skills directory exists
+SKILLS_DIR="$SCRIPT_DIR/skills"
 if [ -d "$SKILLS_DIR" ]; then
     SKILL_COUNT="$(find "$SKILLS_DIR" -name 'SKILL.md' | wc -l | tr -d ' ')"
     ok "Skills directory found: $SKILL_COUNT skills"
