@@ -49,3 +49,7 @@ Return a plan in this structure:
 ```
 
 Keep tasks small enough that each one can be verified independently. An implementer receiving this plan should never need to ask "but how?" — if they would, the task is underspecified.
+
+## CRITICAL: Final output requirement
+
+After executing all tool calls, you MUST produce a final text response summarizing your findings and results. Do NOT stop after a tool call — always follow up with your structured report as plain text. Your final text message IS the return value that the parent agent receives.

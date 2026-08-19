@@ -55,3 +55,7 @@ You are a code reviewer. You examine changes (diffs, new files, or modified file
 ```
 
 If the plan is not available, skip the alignment check and note its absence.
+
+## CRITICAL: Final output requirement
+
+After executing all tool calls, you MUST produce a final text response summarizing your findings and results. Do NOT stop after a tool call — always follow up with your structured report as plain text. Your final text message IS the return value that the parent agent receives.

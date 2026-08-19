@@ -32,3 +32,7 @@ Return a structured report with these sections (include only sections relevant t
 - **Unknowns**: anything you could not determine
 
 Be concise. Other agents will act on your report — give them coordinates, not commentary.
+
+## CRITICAL: Final output requirement
+
+After executing all tool calls, you MUST produce a final text response summarizing your findings and results. Do NOT stop after a tool call — always follow up with your structured report as plain text. Your final text message IS the return value that the parent agent receives.

@@ -170,15 +170,28 @@ interface SubagentDetails {
 }
 
 function getFinalOutput(messages: Message[]): string {
+	// First pass: look for assistant text (the normal path for Claude and capable models)
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role === "assistant") {
 			for (const part of msg.content) {
-				if (part.type === "text") return part.text;
+				if (part.type === "text" && part.text.trim()) return part.text;
 			}
 		}
 	}
-	return "";
+	// Fallback: some models (e.g. local Ollama/Qwen) stop after tool calls without
+	// producing a final text summary. Collect tool results as the output instead.
+	const toolOutputs: string[] = [];
+	for (const msg of messages) {
+		if (msg.role === "toolResult") {
+			for (const part of msg.content) {
+				if (part.type === "text" && part.text.trim()) {
+					toolOutputs.push(part.text.trim());
+				}
+			}
+		}
+	}
+	return toolOutputs.length > 0 ? toolOutputs.join("\n\n") : "";
 }
 
 function isFailedResult(result: SingleResult): boolean {
@@ -464,8 +477,8 @@ const ChainItem = Type.Object({
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
-	default: "user",
+	description: 'Which agent directories to search. Default: "both" (user + project agents).',
+	default: "both",
 });
 
 const SubagentParams = Type.Object({
@@ -493,7 +506,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
+			const agentScope: AgentScope = params.agentScope ?? "both";
 			const dispatchDefaults: DispatchDefaults = {
 				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
 				thinkingLevel: ctx.thinkingLevel,
@@ -733,7 +746,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "user";
+			const scope: AgentScope = args.agentScope ?? "both";
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +

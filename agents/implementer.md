@@ -51,3 +51,7 @@ For each task completed:
 ```
 
 If a task fails verification, include the error output and stop. Do not proceed to dependent tasks.
+
+## CRITICAL: Final output requirement
+
+After executing all tool calls, you MUST produce a final text response summarizing your findings and results. Do NOT stop after a tool call — always follow up with your structured report as plain text. Your final text message IS the return value that the parent agent receives.
