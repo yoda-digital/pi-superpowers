@@ -303,20 +303,31 @@ async function runSingleAgent(
 		};
 	}
 
+	// Build args to match the exact pattern proven to work in manual testing:
+	//   pi --mode json -p --no-session --no-extensions --no-skills
+	//      --no-context-files --no-themes --approve --tools <list> "Task: ..."
+	// Key lessons from debugging Qwen/Ollama tool calling:
+	//   - Do NOT pass --model explicitly (let child resolve default from settings.json;
+	//     passing provider/model format changes Pi's model resolution path and degrades
+	//     Ollama's tool call formatting)
+	//   - Do NOT use --append-system-prompt (adds system prompt overhead that pushes
+	//     local models toward XML text output instead of structured tool_calls)
+	//   - Keep the prompt SHORT — agent role goes as a one-line prefix, not full body
 	const args: string[] = [
 		"--mode", "json", "-p", "--no-session",
-		"--no-extensions",       // Child must not load superpowers/todo/subagent — prevents context bloat
-		"--no-skills",           // Child does not need skill discovery
-		"--no-context-files",    // Child does not need AGENTS.md/CLAUDE.md from project
-		"--no-themes",           // Themes are irrelevant for non-interactive JSON output
-		"--no-prompt-templates", // No prompt template discovery needed
-		"--approve",             // Trust project directory for tool access (child inherits cwd)
+		"--no-extensions",
+		"--no-skills",
+		"--no-context-files",
+		"--no-themes",
+		"--approve",
 	];
-	// Agent-specified models (e.g. claude-haiku-4-5) may lack auth in this environment.
-	// Fall back to the parent session's model to prevent child exit at startup.
-	const model = (agent.model && dispatchDefaults.model) ? dispatchDefaults.model : (agent.model ?? dispatchDefaults.model);
-	if (model) args.push("--model", model);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+
+	// Model: do NOT pass --model explicitly — child uses default from settings.json.
+	// This matches the manual test pattern that works reliably with Ollama.
+	// The explicit provider/model format (nalyk-ollama/qwen38-27b-shared) causes Pi
+	// to resolve the model through a different path that degrades tool calling.
+	const model = dispatchDefaults.model;
 
 	const currentResult: SingleResult = {
 		agent: agentName,
@@ -340,14 +351,12 @@ async function runSingleAgent(
 	};
 
 	try {
-		// Embed agent role in the task text instead of --append-system-prompt.
-		// This avoids the extra system prompt overhead that degrades tool calling
-		// on local models (Qwen/Ollama). The manual test without --append-system-prompt
-		// works reliably; adding it causes non-deterministic XML tool call fallback.
-		const prompt = agent.systemPrompt.trim()
-			? `${agent.systemPrompt.trim()}\n\n---\n\nTask: ${task}`
-			: `Task: ${task}`;
-		args.push(prompt);
+		// Short prompt: agent role as a one-line prefix + task.
+		// Full agent body is NOT included — it adds context overhead that degrades
+		// tool calling on local models. The agent's tool restrictions (--tools flag)
+		// already constrain behavior.
+		const rolePrefix = agent.description ? `[Role: ${agent.name} — ${agent.description}] ` : "";
+		args.push(`${rolePrefix}Task: ${task}`);
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
