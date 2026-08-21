@@ -197,8 +197,52 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	pi.on("session_start", async (_event, ctx) => reconstructState(ctx));
-	pi.on("session_tree", async (_event, ctx) => reconstructState(ctx));
+	// ── pi-statusbar integration ─────────────────────────────────────
+	// Register a native statusbar segment so pi-statusbar can display
+	// todo progress without needing its adapter fallback.
+
+	const registerStatusbarSegments = () => {
+		pi.events.emit("pi-statusbar:register", {
+			pluginId: "pi-superpowers",
+			segments: [
+				{
+					id: "superpowers:todo",
+					position: "left" as const,
+					priority: 45,
+					render: (theme: { fg(color: string, text: string): string }) => {
+						if (todos.length === 0) return null;
+
+						const done = todos.filter((t) => t.done).length;
+						const inProg = todos.filter((t) => t.inProgress && !t.done).length;
+						const pending = todos.length - done - inProg;
+						const parts: string[] = [theme.fg("accent", "TODO")];
+
+						if (done > 0) parts.push(theme.fg("success", `${done}✓`));
+						if (inProg > 0) parts.push(theme.fg("warning", `${inProg}◐`));
+						if (pending > 0) parts.push(theme.fg("dim", `${pending}○`));
+						parts.push(theme.fg("muted", `${done}/${todos.length}`));
+
+						return parts.join(" ");
+					},
+				},
+			],
+		});
+	};
+
+	// When pi-statusbar announces it's ready, register our segments.
+	pi.events.on("pi-statusbar:ready", () => registerStatusbarSegments());
+
+	const notifyStatusbar = () => pi.events.emit("pi-statusbar:update", { pluginId: "pi-superpowers" });
+
+	pi.on("session_start", async (_event, ctx) => {
+		reconstructState(ctx);
+		// Re-register in case statusbar was already ready before us.
+		registerStatusbarSegments();
+	});
+	pi.on("session_tree", async (_event, ctx) => {
+		reconstructState(ctx);
+		notifyStatusbar();
+	});
 
 	// -------------------------------------------------------------------
 	// Tool registration
@@ -213,7 +257,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: TodoParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			switch (params.action) {
+			const result = await (async () => { switch (params.action) {
 				// ---- list -------------------------------------------------------
 				case "list":
 					return {
@@ -467,6 +511,10 @@ export default function (pi: ExtensionAPI) {
 						} as TodoDetails,
 					};
 			}
+			})();
+			// Notify statusbar after any state-changing action.
+			if (params.action !== "list") notifyStatusbar();
+			return result;
 		},
 
 		// -----------------------------------------------------------------
