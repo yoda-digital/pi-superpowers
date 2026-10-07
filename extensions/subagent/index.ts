@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -40,6 +41,9 @@ import {
 	shouldAppendSystemPrompt,
 } from "../lib/subagent-child.ts";
 import { type AgentConfig, type AgentScope, DEFAULT_AGENT_SCOPE, discoverAgents, getUserAgentsDir } from "./agents.ts";
+
+/** Loaded into children that use web tools; they run with --no-extensions. */
+const WEB_EXTENSION_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "web.ts");
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -328,6 +332,7 @@ async function runSingleAgent(
 			dispatchDefaults,
 			promptMode,
 			systemPromptFile: tmpPromptPath ?? undefined,
+			webExtensionPath: WEB_EXTENSION_PATH,
 		});
 		// The model passed to the child; in lean mode it is unknown until the child reports it.
 		currentResult.model = model;

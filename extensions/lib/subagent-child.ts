@@ -51,10 +51,20 @@ export interface BuildChildArgsOptions {
 	promptMode: PromptMode;
 	/** File holding agent.systemPrompt. Required in full mode when the body is non-empty. */
 	systemPromptFile?: string;
+	/** Path of extensions/web.ts; loaded with -e for agents that use web tools. */
+	webExtensionPath?: string;
 }
 
 export function resolvePromptMode(env: Record<string, string | undefined>): PromptMode {
 	return env[PROMPT_MODE_ENV]?.trim().toLowerCase() === "lean" ? "lean" : "full";
+}
+
+/**
+ * Children run with --no-extensions, so the web tools must be loaded explicitly
+ * for agents that list a web_* tool, or that allow all tools (no `tools` field).
+ */
+export function childNeedsWebTools(agent: Pick<ChildAgent, "tools">): boolean {
+	return !agent.tools || agent.tools.some((t) => t.startsWith("web_"));
 }
 
 export function shouldAppendSystemPrompt(agent: ChildAgent, promptMode: PromptMode): boolean {
@@ -69,6 +79,7 @@ export function shouldAppendSystemPrompt(agent: ChildAgent, promptMode: PromptMo
 export function buildChildArgs(opts: BuildChildArgsOptions): { args: string[]; model?: string } {
 	const { agent, task, dispatchDefaults, promptMode } = opts;
 	const args: string[] = [...CHILD_ISOLATION_FLAGS];
+	if (opts.webExtensionPath && childNeedsWebTools(agent)) args.push("-e", opts.webExtensionPath);
 	let model: string | undefined;
 
 	if (promptMode === "full") {

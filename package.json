@@ -11,7 +11,8 @@
     "extensions": [
       "extensions/superpowers.ts",
       "extensions/subagent/index.ts",
-      "extensions/todo.ts"
+      "extensions/todo.ts",
+      "extensions/web.ts"
     ],
     "skills": ["skills/"]
   },

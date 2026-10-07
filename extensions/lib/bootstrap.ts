@@ -19,11 +19,11 @@ export const INLINE_TOOL_MAPPING = `## Pi tool mapping
 
 Pi has native skills but does not expose Claude Code's \`Skill\` tool. When a Superpowers instruction says to invoke a skill, load the relevant \`SKILL.md\` with \`read\`, or let a human invoke \`/skill:name\`.
 
-Pi's built-in coding tools are lowercase: \`read\`, \`write\`, \`edit\`, \`bash\`, \`grep\`, \`find\`, and \`ls\`. Use them to read a file, create or edit files, run shell commands, search file contents, find files by name, and list directories.
+Pi's built-in coding tools are lowercase. \`read\`, \`write\`, \`edit\` and \`bash\` are enabled by default; \`grep\`, \`find\` and \`ls\` are available only when enabled (\`defaultTools\` setting or \`--tools\`) — when they are not in your tool list, search, find and list files through \`bash\`.
 
 Pi has no dedicated worktree tools. When a Superpowers instruction calls for an isolated worktree, run \`git worktree add\` / \`git worktree remove\` through \`bash\`.
 
-Pi does not ship web search or web fetch tools. If an extension or MCP server provides web access, use it; otherwise say the capability is missing rather than fabricating calls.
+For web access use this package's tools: \`web_search\` (Superpowers' \`WebSearch\`), \`web_fetch\` (\`WebFetch\`), \`web_verify\` to fact-check a claim, and \`web_watch\` to track new sources on a topic. If they report a missing Tavily key, ask the user to run \`/web-key\` rather than fabricating results.
 
 Use this package's \`subagent\` tool for Superpowers subagent workflows. If it is not available, do the work in this session instead of inventing \`Task\` calls.
 

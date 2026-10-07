@@ -11,6 +11,7 @@ import {
   PROMPT_MODE_ENV,
   buildChildArgs,
   childModelLabel,
+  childNeedsWebTools,
   getFinalOutput,
   resolvePromptMode,
   shouldAppendSystemPrompt,
@@ -124,6 +125,32 @@ describe("both modes", () => {
   it("omits --tools when the agent allows all tools", () => {
     const { args } = buildChildArgs({ agent: agent({ tools: undefined }), task: "t", dispatchDefaults: parent, promptMode: "lean" });
     assert.ok(!args.includes("--tools"));
+  });
+});
+
+describe("web tools in children", () => {
+  const WEB = "/pkg/extensions/web.ts";
+
+  it("are needed when the agent lists a web_* tool or allows all tools", () => {
+    assert.equal(childNeedsWebTools(agent({ tools: ["read", "web_search"] })), true);
+    assert.equal(childNeedsWebTools(agent({ tools: ["read", "web_*"] })), true);
+    assert.equal(childNeedsWebTools(agent({ tools: undefined })), true);
+    assert.equal(childNeedsWebTools(agent({ tools: ["read", "grep"] })), false);
+  });
+
+  for (const promptMode of ["full", "lean"]) {
+    it(`${promptMode}: load the web extension explicitly (children run with --no-extensions)`, () => {
+      const { args } = buildChildArgs({ agent: agent({ tools: ["read", "web_search"] }), task: "t", dispatchDefaults: parent, promptMode, systemPromptFile: "/f", webExtensionPath: WEB });
+      assert.equal(flag(args, "-e"), WEB);
+      assert.ok(args.indexOf("-e") > args.indexOf("--no-extensions"));
+    });
+  }
+
+  it("are not loaded for agents that do not use them, or when no path is given", () => {
+    const a = buildChildArgs({ agent: agent(), task: "t", dispatchDefaults: parent, promptMode: "lean", webExtensionPath: WEB });
+    assert.ok(!a.args.includes("-e"));
+    const b = buildChildArgs({ agent: agent({ tools: ["web_search"] }), task: "t", dispatchDefaults: parent, promptMode: "lean" });
+    assert.ok(!b.args.includes("-e"));
   });
 });
 

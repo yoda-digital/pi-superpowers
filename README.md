@@ -1,6 +1,6 @@
 # pi-superpowers
 
-A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) methodology to the [Pi coding agent](https://github.com/earendil-works/pi). It bundles the full Superpowers skill set, a bootstrap extension that auto-injects the methodology at session start, a subagent tool for multi-agent workflows, a todo tool for task tracking, six ready-to-use agent definitions, and a tool mapping reference that bridges Superpowers' action vocabulary to Pi's native tools.
+A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) methodology to the [Pi coding agent](https://github.com/earendil-works/pi). It bundles the full Superpowers skill set, a bootstrap extension that auto-injects the methodology at session start, a subagent tool for multi-agent workflows, a todo tool for task tracking, native web tools (search, fetch, verify, watch) backed by Tavily, six ready-to-use agent definitions, and a tool mapping reference that bridges Superpowers' action vocabulary to Pi's native tools.
 
 ## What's Included
 
@@ -11,6 +11,7 @@ A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) 
 | **Superpowers bootstrap** | `extensions/superpowers.ts` | Injects the `using-superpowers` skill at session start (and after compaction), registers the `skills/` directory for discovery. The bootstrap is deduplicated and re-reads from disk on every injection so edits take effect mid-session. |
 | **Subagent tool** | `extensions/subagent/index.ts` | Registers the `subagent` tool with single, parallel (up to 8 tasks, 4 concurrent), and chain modes. Spawns isolated `pi` processes per agent — each gets the agent definition as its system prompt — with JSON-mode streaming, TUI rendering, and usage tracking. |
 | **Todo tool** | `extensions/todo.ts` | Registers the `todo` tool and `/todos` TUI command. State is reconstructed from tool-result history so it survives session branching. Supports `add`, `toggle`, `remove`, `rename`, `in_progress`, `list`, and `clear`. |
+| **Web tools** | `extensions/web.ts` | Registers `web_search`, `web_fetch`, `web_verify` and `web_watch` (Tavily) and the `/web-key` command. Superpowers' `WebSearch` / `WebFetch` map to these. Subagents whose agent lists a `web_*` tool get them too. See [Web tools](#web-tools-tavily). |
 
 ### Agents
 
@@ -23,7 +24,7 @@ Installed to `~/.pi/agent/agents/` by the setup script (or copied there by hand)
 | **implementer** | read, write, edit, bash, grep, find, ls | Executes plan tasks, writes code, runs builds and tests. |
 | **reviewer** | read, bash, grep, find, ls | Code review for correctness, security, quality, and plan alignment. Read-only. |
 | **debugger** | read, write, edit, bash, grep, find, ls | Systematic debugging: reproduce, investigate, hypothesize, fix, verify. |
-| **researcher** | bash, read, write, grep, find, ls | Web research through the [`vsearch`](https://tavily.com) CLI (Tavily). Requires `vsearch` on `PATH`. |
+| **researcher** | web_search, web_fetch, web_verify, web_watch, read, write | Web research: explores, reads sources, verifies claims, returns a cited report. Needs a Tavily key (`/web-key`). |
 
 ### Skills (from Superpowers)
 
@@ -115,6 +116,7 @@ What to check:
 2. The agent should invoke the `brainstorming` skill before writing code.
 3. The `todo` tool should be available (try asking the agent to track tasks).
 4. The `subagent` tool should be available (try `subagent` with `agent: "scout"` and a task).
+5. After `/web-key`, ask something current ("what changed in the latest Node.js release?") and the agent should call `web_search`.
 
 ## Architecture Overview
 
@@ -126,8 +128,9 @@ pi-superpowers/
 │   │   ├── index.ts            # subagent tool registration
 │   │   └── agents.ts           # Agent discovery from ~/.pi/agent/agents/ and .pi/agents/
 │   ├── todo.ts                 # todo tool + /todos TUI command
-│   └── lib/                    # Pi-independent logic (bootstrap, agent config,
-│                               #   child process args, todo state) — what the tests import
+│   ├── web.ts                  # web_search / web_fetch / web_verify / web_watch + /web-key
+│   └── lib/                    # Pi-independent logic (bootstrap, agent config, child
+│                               #   process args, todo state, web/) — what the tests import
 ├── agents/                     # Agent definition markdown files
 │   ├── scout.md
 │   ├── planner.md
@@ -151,7 +154,7 @@ pi-superpowers/
 
 ### How the pieces fit together
 
-1. **Installation** registers the three extensions with Pi's runtime and makes skills discoverable.
+1. **Installation** registers the four extensions with Pi's runtime and makes skills discoverable.
 
 2. **On session start**, the `superpowers.ts` extension fires:
    - Registers `skills/` for skill discovery via the `resources_discover` event.
@@ -163,7 +166,9 @@ pi-superpowers/
 
 5. **The todo extension** registers the `todo` tool and the `/todos` TUI command. State lives in tool-result details (not external files), so it branches correctly with session history. Every action produces a new immutable snapshot, so later actions never rewrite earlier ones.
 
-6. **The tool mapping** (`references/pi-tools.md`) translates Superpowers' action vocabulary to Pi's tools. When a skill says "dispatch a subagent," the mapping tells the agent to use the `subagent` tool. When it says "create a todo," use the `todo` tool. Core file operations map to Pi's seven built-in tools (`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`).
+6. **The web extension** registers four Tavily-backed tools that run in parallel with other tool calls and are marked read-only/open-world (`web_watch` writes its own state file). Long results are truncated to Pi's limits with the full text saved to a temp file. Children of the `subagent` tool run with `--no-extensions`, so the subagent loads `extensions/web.ts` explicitly (`-e`) for agents that list a `web_*` tool or allow all tools.
+
+7. **The tool mapping** (`references/pi-tools.md`) translates Superpowers' action vocabulary to Pi's tools. When a skill says "dispatch a subagent," the mapping tells the agent to use the `subagent` tool. When it says "create a todo," use the `todo` tool. Web actions map to the `web_*` tools. Core file operations map to Pi's built-in tools; `read`, `write`, `edit` and `bash` are enabled by default, `grep`, `find` and `ls` only when `defaultTools` or `--tools` enables them.
 
 ## Configuration
 
@@ -204,7 +209,22 @@ By default each child gets the agent's full system prompt and the parent's model
 export PI_SUBAGENT_PROMPT_MODE=lean
 ```
 
-In lean mode a child gets only a one-line `[Role: name — description]` prefix instead of the agent body, and no `--model` / `--thinking` flags, so it uses the defaults from `settings.json`. The agent's tool restrictions still apply, but its instructions (output format, methodology, the researcher's `vsearch` reference) do not reach the model. The subagent result shows the model the child actually used.
+In lean mode a child gets only a one-line `[Role: name — description]` prefix instead of the agent body, and no `--model` / `--thinking` flags, so it uses the defaults from `settings.json`. The agent's tool restrictions still apply, but its instructions (output format, methodology, the researcher's guide to the web tools) do not reach the model. The subagent result shows the model the child actually used.
+
+### Web tools (Tavily)
+
+The web tools call the [Tavily API](https://docs.tavily.com) and need an API key (free tier available at [app.tavily.com](https://app.tavily.com)). Configure it once, in any of these ways (first match wins):
+
+1. `TAVILY_API_KEY` in the environment Pi starts with.
+2. `/web-key tvly-...` in a Pi session (or `/web-key` alone to be prompted). The key is checked with one search (1 credit) and saved to `~/.pi/agent/superpowers/tavily.env` with mode 600.
+3. A `TAVILY_API_KEY=tvly-...` line in that file, written by hand.
+
+| Tool | What it does | Credits |
+|---|---|---|
+| `web_search` | `query`, or `queries` (2-5 phrasings) in parallel, merged by URL with domain consensus. Options: `topic` (`general`/`news`/`finance`), `since`, `depth`, `max_results`, `include_answer`, `include_domains`, `exclude_domains`, `extract_top` (also read the top 1-5 pages), `max_chars` | 1 per query (2 with `depth: "advanced"`), plus extraction |
+| `web_fetch` | Reads `urls` (1-20); `intent` returns the parts of each page most relevant to it | 1 per 5 pages (2 advanced) |
+| `web_verify` | Evidence summary and sources for a `claim`, and for a `counter` claim when given | 1 per side |
+| `web_watch` | First call records a baseline for `name`; later calls return only new sources. State: `~/.pi/agent/superpowers/web-watch/<name>.json` (delete it to reset) | 1 per call |
 
 ### Tool mapping
 
@@ -216,9 +236,9 @@ Edit `references/pi-tools.md` to adjust how Superpowers actions map to your Pi e
 npm test          # or: bash tests/run.sh
 ```
 
-Requires Node.js 22.18 or newer: the tests import the real TypeScript modules in `extensions/lib/` through Node's built-in type stripping, and drive `extensions/superpowers.ts` through a fake Pi host. They cover the bootstrap, agent discovery, how child `pi` processes are built (both prompt modes), the todo state machine, and that this README and `references/pi-tools.md` match the code. No Pi installation is required.
+Requires Node.js 22.18 or newer: the tests import the real TypeScript modules in `extensions/lib/` through Node's built-in type stripping, and drive `extensions/superpowers.ts` through a fake Pi host. They cover the bootstrap, agent discovery, how child `pi` processes are built (both prompt modes, web tools in children), the todo state machine, the web tools against a fake Tavily API, and that this README and `references/pi-tools.md` match the code. No Pi installation is required.
 
-The parts that need Pi's runtime (`extensions/subagent/index.ts`, `extensions/todo.ts`, `extensions/subagent/agents.ts`) are thin wiring around those modules; check them with `tsc` against Pi's type declarations, and with a real session (see [Verifying It Works](#verifying-it-works)).
+The parts that need Pi's runtime (`extensions/subagent/index.ts`, `extensions/todo.ts`, `extensions/web.ts`, `extensions/subagent/agents.ts`) are thin wiring around those modules; check them with `tsc` against Pi's type declarations, and with a real session (see [Verifying It Works](#verifying-it-works)).
 
 ## Troubleshooting
 
@@ -233,6 +253,13 @@ The parts that need Pi's runtime (`extensions/subagent/index.ts`, `extensions/to
 - The bootstrap must be injected first (see above). Without it, skills are discovered but never invoked automatically.
 - Verify skills are discovered: use `/skill:` in Pi to list available skills.
 - Check that `references/pi-tools.md` exists and is readable. A missing tool mapping means the agent may not know how to invoke Pi's tools when a skill asks it to.
+
+### Web tools fail
+
+- "No Tavily API key configured": run `/web-key` (see [Web tools](#web-tools-tavily)).
+- "Tavily API error 401": the key is invalid or revoked; set a new one with `/web-key`.
+- Other "Tavily API error …" messages (rate or usage limits) come straight from Tavily; check your account at app.tavily.com.
+- A subagent says it has no web tools: its agent's `tools` must list them (e.g. `web_search, web_fetch`).
 
 ### Subagent ignores its instructions or prints tool calls as text
 

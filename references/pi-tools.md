@@ -4,7 +4,7 @@ Skills speak in actions ("dispatch a subagent", "create a todo", "read a file").
 
 ## Core Tools
 
-Pi's seven built-in coding tools are lowercase. They are always available.
+Pi's built-in coding tools are lowercase. `read`, `write`, `edit` and `bash` are enabled by default; `grep`, `find` and `ls` exist but are enabled only through the `defaultTools` setting or `--tools`. Use the tools in your tool list; when `grep`, `find` or `ls` is missing, do the same through `bash`.
 
 | Action skills request | Pi tool |
 |---|---|
@@ -12,9 +12,9 @@ Pi's seven built-in coding tools are lowercase. They are always available.
 | Create a new file | `write` |
 | Edit a file (targeted patch) | `edit` |
 | Run a shell command | `bash` |
-| Search file contents (regex) | `grep` |
-| Find files by name / pattern | `find` |
-| List a directory | `ls` |
+| Search file contents (regex) | `grep` if enabled, else `bash` (`rg` / `grep -rn`) |
+| Find files by name / pattern | `find` if enabled, else `bash` (`find` / `fd`) |
+| List a directory | `ls` if enabled, else `bash` (`ls`) |
 
 ## Subagents
 
@@ -79,14 +79,16 @@ Pi does not expose Claude Code's `Skill` tool. When a Superpowers instruction sa
 
 ## Web Access
 
-Pi does not ship built-in web search or web fetch tools. These capabilities depend on extensions or MCP servers.
+This package's web extension (`extensions/web.ts`) provides Tavily-backed web tools. They need a Tavily API key: the user runs `/web-key`, sets `TAVILY_API_KEY`, or puts it in `~/.pi/agent/superpowers/tavily.env`.
 
-| Action skills request | Pi equivalent |
+| Action skills request | Pi tool |
 |---|---|
-| Fetch a URL / read a webpage | Extension or MCP tool if available; otherwise note the missing capability |
-| Search the web | Extension or MCP tool if available; otherwise note the missing capability |
+| Search the web (`WebSearch`) | `web_search` with `query`; `queries` (2-5 phrasings) for parallel searches with domain consensus; `topic: "news"` + `since` for recent news; `extract_top` to also read the top results |
+| Fetch a URL / read a webpage (`WebFetch`) | `web_fetch` with `urls`; `intent` returns the most relevant parts of each page |
+| Fact-check a claim | `web_verify` with `claim` (and optional `counter`) |
+| Monitor a topic over time | `web_watch` with `query` and `name`: first call is a baseline, later calls return only new sources |
 
-Do not fabricate `WebSearch` or `WebFetch` calls. If no web tool is available, say so.
+If a web tool reports that no key is configured, tell the user to run `/web-key`; do not fabricate results.
 
 ## Instructions File
 
@@ -94,10 +96,11 @@ When a skill mentions "your instructions file," on Pi this is **`AGENTS.md`** in
 
 ## Graceful Degradation
 
-The core seven tools (`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`) are always present. `subagent` and `todo` are provided by this package's companion extensions and are available whenever the package is installed. For everything else:
+`read`, `write`, `edit` and `bash` are enabled by default; `grep`, `find` and `ls` only when `defaultTools` or `--tools` enables them. `subagent`, `todo` and the `web_*` tools are provided by this package's extensions and are available whenever the package is installed (the web tools also need a Tavily key). For everything else:
 
 | Capability | If unavailable |
 |---|---|
-| Web fetch / search | Note the missing capability; do not fabricate tool calls |
-| Git worktrees | Use `bash` with git commands (always works) |
+| Web fetch / search (no Tavily key) | Ask the user to run `/web-key`; do not fabricate results |
+| `grep` / `find` / `ls` not enabled | Use `bash` |
+| Git worktrees | Use `bash` with git commands |
 | MCP servers | Check what is available; do not assume |

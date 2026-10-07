@@ -126,14 +126,20 @@ describe("buildBootstrapContent", () => {
 });
 
 describe("inline fallback mapping", () => {
+  it("does not claim grep/find/ls are enabled by default", () => {
+    assert.match(INLINE_TOOL_MAPPING, /`grep`, `find` and `ls`[^.]*only when enabled/);
+  });
+
   it("does not claim Pi ships worktree tools", () => {
     assert.ok(!/Pi ships `?EnterWorktree/.test(INLINE_TOOL_MAPPING));
     assert.match(INLINE_TOOL_MAPPING, /git worktree/);
   });
 
-  it("points at this package's own subagent and todo tools", () => {
+  it("points at this package's own subagent, todo and web tools", () => {
     assert.match(INLINE_TOOL_MAPPING, /`subagent`/);
     assert.match(INLINE_TOOL_MAPPING, /`todo`/);
+    assert.match(INLINE_TOOL_MAPPING, /`web_search`/);
+    assert.match(INLINE_TOOL_MAPPING, /`web_fetch`/);
   });
 });
 

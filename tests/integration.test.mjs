@@ -27,6 +27,8 @@ const isDir = (p) => {
 const pkg = JSON.parse(read("package.json"));
 const readme = read("README.md");
 const piTools = read("references", "pi-tools.md");
+const webSource = read("extensions", "web.ts");
+const webToolNames = [...webSource.matchAll(/name: "(web_\w+)"/g)].map((m) => m[1]).sort();
 const shippedAgents = readdirSync(join(projectRoot, "agents"))
   .filter((f) => f.endsWith(".md"))
   .map((f) => f.replace(/\.md$/, ""))
@@ -130,11 +132,47 @@ describe("references/pi-tools.md", () => {
     assert.match(piTools, new RegExp(PROMPT_MODE_ENV));
   });
 
+  it("does not claim grep/find/ls are always enabled (Pi enables read, bash, edit, write by default)", () => {
+    assert.doesNotMatch(piTools, /always (present|available)/i);
+    assert.match(piTools, /defaultTools/);
+  });
+
   it("says Pi has no worktree tools", () => {
     assert.match(piTools, /does not ship dedicated worktree tools/);
   });
 
   it("documents every todo action", () => {
     for (const a of ACTIONS) assert.ok(piTools.includes(`"${a}"`), a);
+  });
+});
+
+describe("web tools", () => {
+  it("web.ts registers web_search, web_fetch, web_verify and web_watch", () => {
+    assert.deepEqual(webToolNames, ["web_fetch", "web_search", "web_verify", "web_watch"]);
+  });
+
+  it("no shipped agent depends on the external vsearch CLI", () => {
+    for (const a of shippedAgents) assert.doesNotMatch(read("agents", `${a}.md`), /vsearch/, a);
+  });
+
+  it("every web_* tool an agent names exists", () => {
+    for (const a of shippedAgents) {
+      for (const [, name] of read("agents", `${a}.md`).matchAll(/\b(web_[a-z_]+)\b/g)) {
+        assert.ok(webToolNames.includes(name), `${a}.md names unknown tool ${name}`);
+      }
+    }
+  });
+
+  it("pi-tools.md maps WebSearch/WebFetch to the package tools and explains the key", () => {
+    assert.match(piTools, /WebSearch[^\n]*`web_search`/);
+    assert.match(piTools, /WebFetch[^\n]*`web_fetch`/);
+    assert.match(piTools, /\/web-key/);
+    for (const t of webToolNames) assert.ok(piTools.includes(`\`${t}\``), t);
+  });
+
+  it("README documents every web tool and how to configure the key", () => {
+    for (const t of webToolNames) assert.ok(readme.includes(`\`${t}\``), t);
+    assert.match(readme, /\/web-key/);
+    assert.match(readme, /TAVILY_API_KEY/);
   });
 });
