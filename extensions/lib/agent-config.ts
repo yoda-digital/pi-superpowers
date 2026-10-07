@@ -8,8 +8,15 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export type AgentScope = "user" | "project" | "both";
+
+/** Where an agent definition came from, from least to most specific. */
+export type AgentSource = "package" | "user" | "project";
+
+/** Agent definitions shipped with this package; they update with the package. */
+export const PACKAGE_AGENTS_DIR = fileURLToPath(new URL("../../agents/", import.meta.url)).replace(/[\\/]$/, "");
 
 /** Used by the subagent tool when the caller does not pass `agentScope`. */
 export const DEFAULT_AGENT_SCOPE: AgentScope = "both";
@@ -20,7 +27,9 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	systemPrompt: string;
-	source: "user" | "project";
+	source: AgentSource;
+	/** Set when this definition replaces one with the same name from a less specific source. */
+	overrides?: AgentSource;
 	filePath: string;
 }
 
@@ -49,7 +58,7 @@ export function parseToolList(value: unknown): string[] | undefined {
 
 export function loadAgentsFromDir(
 	dir: string,
-	source: "user" | "project",
+	source: AgentSource,
 	parseFrontmatter: FrontmatterParser,
 ): AgentConfig[] {
 	const agents: AgentConfig[] = [];
@@ -113,14 +122,27 @@ export function findNearestProjectAgentsDir(cwd: string, configDirName: string):
 	}
 }
 
-/** Project agents override user agents with the same name when scope is "both". */
-export function mergeAgentsByScope(
-	userAgents: AgentConfig[],
-	projectAgents: AgentConfig[],
+/**
+ * Combine agent sources for a scope. "user" = package + user agents,
+ * "project" = project agents only, "both" = all three. A more specific source
+ * replaces a less specific one with the same name and records what it overrode.
+ */
+export function mergeAgents(
+	sources: { package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] },
 	scope: AgentScope,
 ): AgentConfig[] {
-	const agentMap = new Map<string, AgentConfig>();
-	if (scope !== "project") for (const agent of userAgents) agentMap.set(agent.name, agent);
-	if (scope !== "user") for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	return Array.from(agentMap.values());
+	const layers = scope === "project" ? [sources.project] : scope === "user" ? [sources.package, sources.user] : [sources.package, sources.user, sources.project];
+	const byName = new Map<string, AgentConfig>();
+	for (const layer of layers) {
+		for (const agent of layer) {
+			const prev = byName.get(agent.name);
+			byName.set(agent.name, prev ? { ...agent, overrides: prev.source } : agent);
+		}
+	}
+	return Array.from(byName.values());
+}
+
+/** "user", or "user, overrides package" — where an agent came from and what it shadows. */
+export function agentOrigin(agent: Pick<AgentConfig, "source" | "overrides">): string {
+	return agent.overrides ? `${agent.source}, overrides ${agent.overrides}` : agent.source;
 }

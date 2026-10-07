@@ -15,7 +15,7 @@ A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) 
 
 ### Agents
 
-Installed to `~/.pi/agent/agents/` by the setup script (or copied there by hand). Used by the `subagent` tool. None of them pins a model: each runs on the parent session's model and thinking level unless you add a `model` field.
+Shipped in the package's `agents/` directory and loaded from there by the `subagent` tool, so they update with the package; nothing to copy. None of them pins a model: each runs on the parent session's model and thinking level unless you add a `model` field.
 
 | Agent | Tools | Role |
 |---|---|---|
@@ -59,12 +59,7 @@ Installed to `~/.pi/agent/agents/` by the setup script (or copied there by hand)
 pi install git:github.com/yoda-digital/pi-superpowers
 ```
 
-Then copy the agent definitions:
-
-```bash
-mkdir -p ~/.pi/agent/agents
-cp ~/.pi/agent/git/github.com/yoda-digital/pi-superpowers/agents/*.md ~/.pi/agent/agents/
-```
+That is all: the agents ship inside the package and update with `pi update --extensions`.
 
 ### Option B: Local checkout (recommended for development)
 
@@ -73,9 +68,6 @@ Pi loads a local package from its path without copying it, so edits take effect 
 ```bash
 git clone git@github.com:yoda-digital/pi-superpowers.git ~/gits/pi-superpowers
 pi install ~/gits/pi-superpowers
-
-mkdir -p ~/.pi/agent/agents
-cp ~/gits/pi-superpowers/agents/*.md ~/.pi/agent/agents/
 ```
 
 Do not symlink individual extension files into `~/.pi/agent/extensions/`. Pi's loader resolves relative paths from the symlink's location, not the target's, so the bootstrap cannot find `skills/` (it silently injects nothing) and the extensions cannot import their `extensions/lib/` helpers.
@@ -85,9 +77,6 @@ Do not symlink individual extension files into `~/.pi/agent/extensions/`. Pi's l
 ```bash
 cd /path/to/your/project
 pi install -l ~/gits/pi-superpowers   # writes .pi/settings.json
-
-mkdir -p .pi/agents
-cp ~/gits/pi-superpowers/agents/*.md .pi/agents/
 ```
 
 Pi reads `.pi/settings.json` only after you trust the project.
@@ -100,7 +89,7 @@ cd pi-superpowers
 ./setup.sh
 ```
 
-The setup script verifies Pi is installed, runs `pi install` on the checkout, copies agent definitions to `~/.pi/agent/agents/` (backing up any existing files), and prints a verification summary.
+The setup script verifies Pi is installed, runs `pi install` on the checkout, and prints a verification summary. If `~/.pi/agent/agents/` holds copies of the package agents from an older install, it removes the unchanged ones (they would block updates) and warns about modified ones (they override the package version).
 
 ## Verifying It Works
 
@@ -126,7 +115,7 @@ pi-superpowers/
 │   ├── superpowers.ts          # Bootstrap: injects using-superpowers skill
 │   ├── subagent/
 │   │   ├── index.ts            # subagent tool registration
-│   │   └── agents.ts           # Agent discovery from ~/.pi/agent/agents/ and .pi/agents/
+│   │   └── agents.ts           # Agent discovery: package agents/, ~/.pi/agent/agents/, .pi/agents/
 │   ├── todo.ts                 # todo tool + /todos TUI command
 │   ├── web.ts                  # web_search / web_fetch / web_verify / web_watch + /web-key
 │   └── lib/                    # Pi-independent logic (bootstrap, agent config, child
@@ -162,7 +151,7 @@ pi-superpowers/
 
 3. **The bootstrap** tells the agent it has superpowers and teaches it when to invoke each skill. Skills auto-trigger based on task context (brainstorming before creative work, TDD before implementation, systematic-debugging on failures, etc.).
 
-4. **The subagent extension** registers the `subagent` tool, which spawns isolated `pi` child processes (`--no-extensions --no-skills --no-context-files`, so children do not load this package or your AGENTS.md). It discovers agents from `~/.pi/agent/agents/` and the nearest project's `.pi/agents/`. Each child gets its own context window, the agent's body as system prompt, the parent's model unless the agent sets one, and only the tools listed in its frontmatter.
+4. **The subagent extension** registers the `subagent` tool, which spawns isolated `pi` child processes (`--no-extensions --no-skills --no-context-files`, so children do not load this package or your AGENTS.md). It discovers agents from the package's own `agents/`, `~/.pi/agent/agents/` and the nearest project's `.pi/agents/`, the more specific source winning. Each child gets its own context window, the agent's body as system prompt, the parent's model unless the agent sets one, and only the tools listed in its frontmatter.
 
 5. **The todo extension** registers the `todo` tool and the `/todos` TUI command. State lives in tool-result details (not external files), so it branches correctly with session history. Every action produces a new immutable snapshot, so later actions never rewrite earlier ones.
 
@@ -174,7 +163,17 @@ pi-superpowers/
 
 ### Agent customization
 
-Agent definitions live in `~/.pi/agent/agents/`. Each is a markdown file with YAML frontmatter:
+The `subagent` tool reads agent definitions from three places, from least to most specific:
+
+| Source | Directory | Shown as |
+|---|---|---|
+| Package | `agents/` inside this package (updates with `pi update --extensions`) | `package` |
+| User | `~/.pi/agent/agents/` | `user` |
+| Project | nearest `.pi/agents/` up from the working directory | `project` |
+
+An agent with the same `name` in a more specific place replaces the less specific one, and listings say so, e.g. `scout (user, overrides package)`. An override stops receiving package updates for that agent — delete it to go back to the package version.
+
+Each definition is a markdown file with YAML frontmatter:
 
 ```yaml
 ---
@@ -195,11 +194,11 @@ Fields:
 
 The markdown body below the frontmatter is the agent's system prompt. It is appended to the child's system prompt in full.
 
-To customize an agent, edit the file in `~/.pi/agent/agents/`. To add a new agent, create a new `.md` file with the same frontmatter structure.
+To customize a package agent, copy it to `~/.pi/agent/agents/` (or a project's `.pi/agents/`) and edit the copy. To add an agent, create a new `.md` file there with the same frontmatter.
 
 ### Project-local agents
 
-Place agent definitions in `.pi/agents/` within your project. The `subagent` tool searches both user and project agents by default (`agentScope: "both"`); a project agent overrides a user agent with the same name. Pass `agentScope: "user"` or `"project"` to restrict the search. When the project is not trusted, the `subagent` tool asks for confirmation before running project-local agents — but only in interactive sessions; in print/JSON mode it runs them without asking.
+Place agent definitions in `.pi/agents/` within your project. By default (`agentScope: "both"`) the `subagent` tool uses package, user and project agents. `agentScope: "user"` restricts it to package and user agents, `"project"` to project agents only. When the project is not trusted, the `subagent` tool asks for confirmation before running project-local agents — but only in interactive sessions; in print/JSON mode it runs them without asking.
 
 ### Subagent prompt mode (local models)
 
@@ -273,10 +272,10 @@ The parts that need Pi's runtime (`extensions/subagent/index.ts`, `extensions/to
 
 ### Agent not found
 
-- Agent files must be in `~/.pi/agent/agents/` (user scope) or `.pi/agents/` (project scope).
+- Custom agent files must be in `~/.pi/agent/agents/` (user) or `.pi/agents/` (project); the package agents need no files.
 - Each file must have valid YAML frontmatter with at least `name` and `description` fields.
 - File extension must be `.md`.
-- If the call passed `agentScope: "user"`, project agents are not searched (and vice versa).
+- If the call passed `agentScope: "user"`, project agents are not searched; with `"project"`, package and user agents are not.
 
 ### Todo state lost
 

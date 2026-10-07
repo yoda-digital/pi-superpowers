@@ -116,11 +116,24 @@ describe("README", () => {
   it("documents every todo action", () => {
     for (const a of ACTIONS) assert.ok(readme.includes(a), a);
   });
+
+  it("does not tell users to copy agent files (agents ship with the package)", () => {
+    assert.doesNotMatch(readme, /cp [^\n]*agents\/\*\.md/);
+    assert.match(readme, /overrides package/);
+  });
 });
 
 describe("references/pi-tools.md", () => {
   it("states the real default agent scope", () => {
     assert.match(piTools, new RegExp(`defaults to \`"${DEFAULT_AGENT_SCOPE}"\``));
+  });
+
+  it("explains that package agents are built in and can be overridden", () => {
+    assert.match(piTools, /package's own `agents\/`/);
+  });
+
+  it("setup.sh no longer copies agent files", () => {
+    assert.doesNotMatch(read("setup.sh"), /cp "\$agent_file"/);
   });
 
   it("names the real user agents directory", () => {

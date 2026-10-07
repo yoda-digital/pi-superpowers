@@ -12,8 +12,7 @@ fail()  { printf '  \033[1;31m✗\033[0m %s\n' "$1"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENTS_SRC="$SCRIPT_DIR/agents"
-AGENTS_DST="$HOME/.pi/agent/agents"
-TIMESTAMP="$(date +%Y%m%d%H%M%S)"
+USER_AGENTS="$HOME/.pi/agent/agents"
 
 # ── Step 1: Verify Pi is installed ───────────────────────────────────────────
 
@@ -35,32 +34,25 @@ else
     fail "pi install failed. Check the output above."
 fi
 
-# ── Step 3: Copy agent definitions to ~/.pi/agent/agents/ ───────────────────
+# ── Step 3: Retire stale agent copies ───────────────────────────────────────
+# Agents ship with the package and are loaded from it directly. Copies in
+# ~/.pi/agent/agents/ with the same name override the package version, so an
+# unchanged copy would only block future updates: remove those. Copies that
+# differ may be customisations: keep them and say what they override.
 
-info "Installing agent definitions..."
-
-if [ ! -d "$AGENTS_SRC" ]; then
-    fail "Agent source directory not found: $AGENTS_SRC"
-fi
-
-mkdir -p "$AGENTS_DST"
+info "Checking $USER_AGENTS for copies of package agents..."
 
 for agent_file in "$AGENTS_SRC"/*.md; do
     [ -f "$agent_file" ] || continue
     agent_name="$(basename "$agent_file")"
-    dest_file="$AGENTS_DST/$agent_name"
-
-    if [ -f "$dest_file" ]; then
-        # Back up existing file if it differs
-        if ! cmp -s "$agent_file" "$dest_file"; then
-            backup="$dest_file.backup-$TIMESTAMP"
-            cp "$dest_file" "$backup"
-            warn "Backed up existing $agent_name -> $(basename "$backup")"
-        fi
+    user_file="$USER_AGENTS/$agent_name"
+    [ -f "$user_file" ] || continue
+    if cmp -s "$agent_file" "$user_file"; then
+        rm "$user_file"
+        ok "Removed identical copy $user_file (the package version is used)"
+    else
+        warn "$user_file differs from the package version and overrides it; delete it to get package updates"
     fi
-
-    cp "$agent_file" "$dest_file"
-    ok "Installed agent: $agent_name"
 done
 
 # ── Step 4: Verify installation ─────────────────────────────────────────────
@@ -69,7 +61,7 @@ info "Verifying installation..."
 ERRORS=0
 
 # Check that the extensions resolve (pi install would have failed, but double-check)
-for ext in extensions/superpowers.ts extensions/subagent/index.ts extensions/todo.ts; do
+for ext in extensions/superpowers.ts extensions/subagent/index.ts extensions/todo.ts extensions/web.ts; do
     if [ -f "$SCRIPT_DIR/$ext" ]; then
         ok "Extension found: $ext"
     else
@@ -88,15 +80,15 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# Check that agent files landed
+# Check the package's agent definitions
 AGENT_COUNT=0
-for f in "$AGENTS_DST"/*.md; do
+for f in "$AGENTS_SRC"/*.md; do
     [ -f "$f" ] && AGENT_COUNT=$((AGENT_COUNT + 1))
 done
 if [ "$AGENT_COUNT" -gt 0 ]; then
-    ok "Agent definitions installed: $AGENT_COUNT agents in $AGENTS_DST"
+    ok "Package agents found: $AGENT_COUNT in $AGENTS_SRC"
 else
-    warn "No agent definitions found in $AGENTS_DST"
+    warn "No agent definitions found in $AGENTS_SRC"
     ERRORS=$((ERRORS + 1))
 fi
 
@@ -118,11 +110,11 @@ else
 fi
 
 printf '\n  Installed components:\n'
-printf '    Extensions:  superpowers.ts, subagent/index.ts, todo.ts\n'
-printf '    Agents:      planner, implementer, reviewer, debugger, scout\n'
+printf '    Extensions:  superpowers.ts, subagent/index.ts, todo.ts, web.ts\n'
+printf '    Agents:      %s, loaded from the package (override in %s)\n' "$AGENT_COUNT" "$USER_AGENTS"
 printf '    Skills:      %s superpowers skills (upstream)\n' "$SKILL_COUNT"
 printf '    References:  pi-tools.md (tool mapping)\n'
-printf '\n  Agent definitions:  %s\n' "$AGENTS_DST"
+printf '\n  Web tools need a Tavily key: run /web-key in Pi.\n'
 printf '\n  To verify, start Pi and send:\n'
 printf '    Let'\''s make a react todo list\n'
 printf '\n  The brainstorming skill should auto-trigger before any code is written.\n\n'

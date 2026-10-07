@@ -14,10 +14,12 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  agentOrigin,
   DEFAULT_AGENT_SCOPE,
   findNearestProjectAgentsDir,
   loadAgentsFromDir,
-  mergeAgentsByScope,
+  mergeAgents,
+  PACKAGE_AGENTS_DIR,
   parseToolList,
 } from "../extensions/lib/agent-config.ts";
 
@@ -111,18 +113,42 @@ describe("loadAgentsFromDir", () => {
   });
 });
 
-describe("mergeAgentsByScope", () => {
+describe("mergeAgents", () => {
+  const pk = (name) => ({ name, source: "package" });
   const u = (name) => ({ name, source: "user" });
   const p = (name) => ({ name, source: "project" });
+  const names = (list) => list.map((a) => `${a.name}:${a.source}${a.overrides ? `>${a.overrides}` : ""}`).sort();
 
-  it('"user" and "project" return only their own agents', () => {
-    assert.deepEqual(mergeAgentsByScope([u("a")], [p("b")], "user").map((a) => a.name), ["a"]);
-    assert.deepEqual(mergeAgentsByScope([u("a")], [p("b")], "project").map((a) => a.name), ["b"]);
+  it('"user" = package agents + user agents; "project" = project agents only', () => {
+    const sources = { package: [pk("scout")], user: [u("mine")], project: [p("repo")] };
+    assert.deepEqual(names(mergeAgents(sources, "user")), ["mine:user", "scout:package"]);
+    assert.deepEqual(names(mergeAgents(sources, "project")), ["repo:project"]);
   });
 
-  it('"both" merges, and a project agent overrides a user agent of the same name', () => {
-    const merged = mergeAgentsByScope([u("a"), u("shared")], [p("shared"), p("b")], "both");
-    assert.deepEqual(merged.map((a) => `${a.name}:${a.source}`).sort(), ["a:user", "b:project", "shared:project"]);
+  it('"both" = all three; the more specific source wins and says what it overrides', () => {
+    const merged = mergeAgents(
+      { package: [pk("scout"), pk("planner"), pk("shared")], user: [u("planner"), u("shared")], project: [p("shared"), p("repo")] },
+      "both",
+    );
+    assert.deepEqual(names(merged), ["planner:user>package", "repo:project", "scout:package", "shared:project>user"]);
+  });
+
+  it("labels where an agent came from and what it overrides", () => {
+    const [a] = mergeAgents({ package: [pk("scout")], user: [u("scout")], project: [] }, "both");
+    assert.equal(agentOrigin(a), "user, overrides package");
+    assert.equal(agentOrigin(pk("x")), "package");
+  });
+
+  it("does not mutate the input configs", () => {
+    const user = [u("scout")];
+    mergeAgents({ package: [pk("scout")], user, project: [] }, "both");
+    assert.equal(user[0].overrides, undefined);
+  });
+});
+
+describe("package agents", () => {
+  it("are read from the package's own agents/ directory", () => {
+    assert.equal(PACKAGE_AGENTS_DIR, join(projectRoot, "agents"));
   });
 });
 
@@ -147,7 +173,7 @@ describe("default agent scope", () => {
 });
 
 describe("shipped agent definitions", () => {
-  const agents = loadAgentsFromDir(join(projectRoot, "agents"), "user", parseFrontmatter);
+  const agents = loadAgentsFromDir(PACKAGE_AGENTS_DIR, "package", parseFrontmatter);
 
   it("all load", () => {
     assert.deepEqual(

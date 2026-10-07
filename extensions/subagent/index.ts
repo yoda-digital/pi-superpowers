@@ -40,7 +40,15 @@ import {
 	resolvePromptMode,
 	shouldAppendSystemPrompt,
 } from "../lib/subagent-child.ts";
-import { type AgentConfig, type AgentScope, DEFAULT_AGENT_SCOPE, discoverAgents, getUserAgentsDir } from "./agents.ts";
+import {
+	type AgentConfig,
+	type AgentScope,
+	type AgentSource,
+	agentOrigin,
+	DEFAULT_AGENT_SCOPE,
+	discoverAgents,
+	getUserAgentsDir,
+} from "./agents.ts";
 
 /** Loaded into children that use web tools; they run with --no-extensions. */
 const WEB_EXTENSION_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "web.ts");
@@ -163,7 +171,7 @@ interface UsageStats {
 
 interface SingleResult {
 	agent: string;
-	agentSource: "user" | "project" | "unknown";
+	agentSource: AgentSource | "unknown";
 	task: string;
 	exitCode: number;
 	messages: Message[];
@@ -472,7 +480,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			`By default both user agents (${getUserAgentsDir()}) and the nearest project's ${CONFIG_DIR_NAME}/agents are searched; a project agent overrides a user agent with the same name.`,
+			`Agents come from this package, the user directory (${getUserAgentsDir()}) and the nearest project's ${CONFIG_DIR_NAME}/agents; a more specific one overrides a less specific one with the same name.`,
 			`Set agentScope to "user" or "project" to restrict the search.`,
 		].join(" "),
 		parameters: SubagentParams,
@@ -503,7 +511,7 @@ export default function (pi: ExtensionAPI) {
 				});
 
 			if (modeCount !== 1) {
-				const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
+				const available = agents.map((a) => `${a.name} (${agentOrigin(a)})`).join(", ") || "none";
 				return {
 					content: [
 						{
@@ -714,7 +722,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
+			const available = agents.map((a) => `${a.name} (${agentOrigin(a)})`).join(", ") || "none";
 			return {
 				content: [{ type: "text", text: `Invalid parameters. Available agents: ${available}` }],
 				details: makeDetails("single")([]),
