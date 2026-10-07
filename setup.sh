@@ -35,7 +35,7 @@ else
     fail "pi install failed. Check the output above."
 fi
 
-# ── Step 3: Copy agent definitions to ~/.pi/agents/ ─────────────────────────
+# ── Step 3: Copy agent definitions to ~/.pi/agent/agents/ ───────────────────
 
 info "Installing agent definitions..."
 

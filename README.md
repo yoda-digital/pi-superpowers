@@ -1,6 +1,6 @@
 # pi-superpowers
 
-A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) methodology to the [Pi coding agent](https://github.com/earendil-works/pi). It bundles the full Superpowers skill set, a bootstrap extension that auto-injects the methodology at session start, a subagent tool for multi-agent workflows, a todo tool for task tracking, five ready-to-use agent definitions, and a tool mapping reference that bridges Superpowers' action vocabulary to Pi's native tools.
+A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) methodology to the [Pi coding agent](https://github.com/earendil-works/pi). It bundles the full Superpowers skill set, a bootstrap extension that auto-injects the methodology at session start, a subagent tool for multi-agent workflows, a todo tool for task tracking, six ready-to-use agent definitions, and a tool mapping reference that bridges Superpowers' action vocabulary to Pi's native tools.
 
 ## What's Included
 
@@ -9,20 +9,21 @@ A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) 
 | Extension | File | Purpose |
 |---|---|---|
 | **Superpowers bootstrap** | `extensions/superpowers.ts` | Injects the `using-superpowers` skill at session start (and after compaction), registers the `skills/` directory for discovery. The bootstrap is deduplicated and re-reads from disk on every injection so edits take effect mid-session. |
-| **Subagent tool** | `extensions/subagent/index.ts` | Registers the `subagent` tool with single, parallel (up to 8 tasks, 4 concurrent), and chain modes. Spawns isolated `pi` processes per agent with JSON-mode streaming, TUI rendering, and usage tracking. |
-| **Todo tool** | `extensions/todo.ts` | Registers the `todo` tool and `/todos` TUI command. State is reconstructed from tool-result history so it survives session branching. Supports add, toggle, remove, rename, in\_progress, list, and clear. |
+| **Subagent tool** | `extensions/subagent/index.ts` | Registers the `subagent` tool with single, parallel (up to 8 tasks, 4 concurrent), and chain modes. Spawns isolated `pi` processes per agent — each gets the agent definition as its system prompt — with JSON-mode streaming, TUI rendering, and usage tracking. |
+| **Todo tool** | `extensions/todo.ts` | Registers the `todo` tool and `/todos` TUI command. State is reconstructed from tool-result history so it survives session branching. Supports `add`, `toggle`, `remove`, `rename`, `in_progress`, `list`, and `clear`. |
 
 ### Agents
 
-Installed to `~/.pi/agent/agents/` by the setup script. Used by the `subagent` tool.
+Installed to `~/.pi/agent/agents/` by the setup script (or copied there by hand). Used by the `subagent` tool. None of them pins a model: each runs on the parent session's model and thinking level unless you add a `model` field.
 
-| Agent | Model | Tools | Role |
-|---|---|---|---|
-| **scout** | claude-haiku-4-5 | read, bash, grep, find, ls | Fast codebase reconnaissance. Maps structure, finds patterns. Read-only. |
-| **planner** | claude-sonnet-4-5 | read, grep, find, ls | Creates ordered implementation plans with verification steps. Read-only. |
-| **implementer** | claude-sonnet-4-5 | *(all default)* | Executes plan tasks, writes code, runs builds and tests. |
-| **reviewer** | claude-sonnet-4-5 | read, bash, grep, find, ls | Code review for correctness, security, quality, and plan alignment. Read-only. |
-| **debugger** | claude-sonnet-4-5 | *(all default)* | Systematic debugging: reproduce, investigate, hypothesize, fix, verify. |
+| Agent | Tools | Role |
+|---|---|---|
+| **scout** | read, bash, grep, find, ls | Fast codebase reconnaissance. Maps structure, finds patterns. Read-only. |
+| **planner** | read, bash, grep, find, ls | Creates ordered implementation plans with verification steps. Read-only. |
+| **implementer** | read, write, edit, bash, grep, find, ls | Executes plan tasks, writes code, runs builds and tests. |
+| **reviewer** | read, bash, grep, find, ls | Code review for correctness, security, quality, and plan alignment. Read-only. |
+| **debugger** | read, write, edit, bash, grep, find, ls | Systematic debugging: reproduce, investigate, hypothesize, fix, verify. |
+| **researcher** | bash, read, write, grep, find, ls | Web research through the [`vsearch`](https://tavily.com) CLI (Tavily). Requires `vsearch` on `PATH`. |
 
 ### Skills (from Superpowers)
 
@@ -64,55 +65,31 @@ mkdir -p ~/.pi/agent/agents
 cp ~/.pi/agent/git/github.com/yoda-digital/pi-superpowers/agents/*.md ~/.pi/agent/agents/
 ```
 
-### Option B: Manual symlink (recommended for development)
+### Option B: Local checkout (recommended for development)
 
-This approach lets you edit extensions and see changes immediately without re-installing.
+Pi loads a local package from its path without copying it, so edits take effect on the next session (or `/reload`).
 
 ```bash
-# 1. Clone the repo
 git clone git@github.com:yoda-digital/pi-superpowers.git ~/gits/pi-superpowers
-cd ~/gits/pi-superpowers
+pi install ~/gits/pi-superpowers
 
-# 2. Link the superpowers bootstrap extension
-mkdir -p ~/.pi/agent/extensions/superpowers
-ln -sf "$(pwd)/extensions/superpowers.ts" ~/.pi/agent/extensions/superpowers/index.ts
-
-# 3. Link the subagent extension
-mkdir -p ~/.pi/agent/extensions/subagent
-ln -sf "$(pwd)/extensions/subagent/index.ts" ~/.pi/agent/extensions/subagent/index.ts
-ln -sf "$(pwd)/extensions/subagent/agents.ts" ~/.pi/agent/extensions/subagent/agents.ts
-
-# 4. Link the todo extension
-mkdir -p ~/.pi/agent/extensions/todo
-ln -sf "$(pwd)/extensions/todo.ts" ~/.pi/agent/extensions/todo/index.ts
-
-# 5. Link the skills directory
-ln -sf "$(pwd)/skills" ~/.pi/agent/skills/superpowers
-
-# 6. Copy agent definitions
 mkdir -p ~/.pi/agent/agents
-cp agents/*.md ~/.pi/agent/agents/
+cp ~/gits/pi-superpowers/agents/*.md ~/.pi/agent/agents/
 ```
+
+Do not symlink individual extension files into `~/.pi/agent/extensions/`. Pi's loader resolves relative paths from the symlink's location, not the target's, so the bootstrap cannot find `skills/` (it silently injects nothing) and the extensions cannot import their `extensions/lib/` helpers.
 
 ### Option C: Per-project (no global install)
 
-For a single project, place extensions in its `.pi/extensions/` directory:
-
 ```bash
 cd /path/to/your/project
-mkdir -p .pi/extensions
+pi install -l ~/gits/pi-superpowers   # writes .pi/settings.json
 
-# Link just the bootstrap (skills auto-trigger from there)
-ln -sf ~/gits/pi-superpowers/extensions/superpowers.ts .pi/extensions/superpowers.ts
-
-# Optionally link subagent and todo
-mkdir -p .pi/extensions/subagent
-ln -sf ~/gits/pi-superpowers/extensions/subagent/index.ts .pi/extensions/subagent/index.ts
-ln -sf ~/gits/pi-superpowers/extensions/subagent/agents.ts .pi/extensions/subagent/agents.ts
-ln -sf ~/gits/pi-superpowers/extensions/todo.ts .pi/extensions/todo.ts
+mkdir -p .pi/agents
+cp ~/gits/pi-superpowers/agents/*.md .pi/agents/
 ```
 
-Note: Project-level extensions require Pi's trust approval on first session.
+Pi reads `.pi/settings.json` only after you trust the project.
 
 ### Option D: Setup script
 
@@ -122,7 +99,7 @@ cd pi-superpowers
 ./setup.sh
 ```
 
-The setup script verifies Pi is installed, attempts `pi install`, copies agent definitions to `~/.pi/agent/agents/` (backing up any existing files), and prints a verification summary.
+The setup script verifies Pi is installed, runs `pi install` on the checkout, copies agent definitions to `~/.pi/agent/agents/` (backing up any existing files), and prints a verification summary.
 
 ## Verifying It Works
 
@@ -148,13 +125,16 @@ pi-superpowers/
 │   ├── subagent/
 │   │   ├── index.ts            # subagent tool registration
 │   │   └── agents.ts           # Agent discovery from ~/.pi/agent/agents/ and .pi/agents/
-│   └── todo.ts                 # todo tool + /todos TUI command
+│   ├── todo.ts                 # todo tool + /todos TUI command
+│   └── lib/                    # Pi-independent logic (bootstrap, agent config,
+│                               #   child process args, todo state) — what the tests import
 ├── agents/                     # Agent definition markdown files
 │   ├── scout.md
 │   ├── planner.md
 │   ├── implementer.md
 │   ├── reviewer.md
-│   └── debugger.md
+│   ├── debugger.md
+│   └── researcher.md
 ├── skills/                     # 14 Superpowers skills (bundled)
 │   ├── using-superpowers/
 │   ├── brainstorming/
@@ -163,7 +143,7 @@ pi-superpowers/
 │   └── writing-skills/
 ├── references/
 │   └── pi-tools.md             # Tool mapping: Superpowers actions -> Pi tools
-├── tests/                      # 163 tests (node --test)
+├── tests/                      # node --test suite (imports extensions/lib)
 ├── package.json                # Pi package manifest
 ├── setup.sh                    # Installation script
 └── README.md
@@ -179,9 +159,9 @@ pi-superpowers/
 
 3. **The bootstrap** tells the agent it has superpowers and teaches it when to invoke each skill. Skills auto-trigger based on task context (brainstorming before creative work, TDD before implementation, systematic-debugging on failures, etc.).
 
-4. **The subagent extension** registers the `subagent` tool, which spawns isolated `pi` child processes. It discovers agents from `~/.pi/agent/agents/` (user scope) and optionally `.pi/agents/` (project scope). Each agent gets its own context window, model assignment, and tool restrictions defined in its frontmatter.
+4. **The subagent extension** registers the `subagent` tool, which spawns isolated `pi` child processes (`--no-extensions --no-skills --no-context-files`, so children do not load this package or your AGENTS.md). It discovers agents from `~/.pi/agent/agents/` and the nearest project's `.pi/agents/`. Each child gets its own context window, the agent's body as system prompt, the parent's model unless the agent sets one, and only the tools listed in its frontmatter.
 
-5. **The todo extension** registers the `todo` tool and the `/todos` TUI command. State lives in tool-result details (not external files), so it branches correctly with session history.
+5. **The todo extension** registers the `todo` tool and the `/todos` TUI command. State lives in tool-result details (not external files), so it branches correctly with session history. Every action produces a new immutable snapshot, so later actions never rewrite earlier ones.
 
 6. **The tool mapping** (`references/pi-tools.md`) translates Superpowers' action vocabulary to Pi's tools. When a skill says "dispatch a subagent," the mapping tells the agent to use the `subagent` tool. When it says "create a todo," use the `todo` tool. Core file operations map to Pi's seven built-in tools (`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`).
 
@@ -195,8 +175,8 @@ Agent definitions live in `~/.pi/agent/agents/`. Each is a markdown file with YA
 ---
 name: planner
 description: Creates precise implementation plans
-tools: read, grep, find, ls
-model: claude-sonnet-4-5
+tools: read, bash, grep, find, ls
+# model: openai/gpt-4o-mini   # optional; omit to inherit the parent's model
 ---
 
 System prompt content here...
@@ -206,13 +186,25 @@ Fields:
 - **name** (required): How the `subagent` tool references this agent.
 - **description** (required): Shown in agent listings.
 - **tools** (optional): Comma-separated list of tools the agent can use. Omit to allow all tools.
-- **model** (optional): Model override. Omit to inherit the parent session's model.
+- **model** (optional): Model override as `provider/id` (e.g. `openai/gpt-4o-mini`). Omit to inherit the parent session's model and thinking level. The provider must be configured in Pi, or the child exits at startup.
+
+The markdown body below the frontmatter is the agent's system prompt. It is appended to the child's system prompt in full.
 
 To customize an agent, edit the file in `~/.pi/agent/agents/`. To add a new agent, create a new `.md` file with the same frontmatter structure.
 
 ### Project-local agents
 
-Place agent definitions in `.pi/agents/` within your project and invoke the subagent with `agentScope: "both"` or `agentScope: "project"`. Project agents override user agents with the same name. Pi will prompt for confirmation before running project-local agents in untrusted repositories.
+Place agent definitions in `.pi/agents/` within your project. The `subagent` tool searches both user and project agents by default (`agentScope: "both"`); a project agent overrides a user agent with the same name. Pass `agentScope: "user"` or `"project"` to restrict the search. When the project is not trusted, the `subagent` tool asks for confirmation before running project-local agents — but only in interactive sessions; in print/JSON mode it runs them without asking.
+
+### Subagent prompt mode (local models)
+
+By default each child gets the agent's full system prompt and the parent's model. Some local models (observed with Qwen via Ollama) start emitting tool calls as plain text once the system prompt grows. For those, opt into lean mode before starting Pi:
+
+```bash
+export PI_SUBAGENT_PROMPT_MODE=lean
+```
+
+In lean mode a child gets only a one-line `[Role: name — description]` prefix instead of the agent body, and no `--model` / `--thinking` flags, so it uses the defaults from `settings.json`. The agent's tool restrictions still apply, but its instructions (output format, methodology, the researcher's `vsearch` reference) do not reach the model. The subagent result shows the model the child actually used.
 
 ### Tool mapping
 
@@ -221,16 +213,18 @@ Edit `references/pi-tools.md` to adjust how Superpowers actions map to your Pi e
 ## Running Tests
 
 ```bash
-bash tests/run.sh
+npm test          # or: bash tests/run.sh
 ```
 
-Runs 163 tests across 4 test files using Node.js built-in test runner. Tests verify extension logic, agent discovery, todo state management, and package structure. No Pi installation required to run them.
+Requires Node.js 22.18 or newer: the tests import the real TypeScript modules in `extensions/lib/` through Node's built-in type stripping, and drive `extensions/superpowers.ts` through a fake Pi host. They cover the bootstrap, agent discovery, how child `pi` processes are built (both prompt modes), the todo state machine, and that this README and `references/pi-tools.md` match the code. No Pi installation is required.
+
+The parts that need Pi's runtime (`extensions/subagent/index.ts`, `extensions/todo.ts`, `extensions/subagent/agents.ts`) are thin wiring around those modules; check them with `tsc` against Pi's type declarations, and with a real session (see [Verifying It Works](#verifying-it-works)).
 
 ## Troubleshooting
 
 ### Bootstrap not injecting
 
-- Confirm the package is installed: check `~/.pi/agent/extensions/` for the symlinks or installed files.
+- Confirm the package is installed: it must be listed under `packages` in `~/.pi/agent/settings.json` (or `.pi/settings.json` for a per-project install). Symlinked extension files do not work (see Option B).
 - Check that `skills/using-superpowers/SKILL.md` exists relative to the package root. The extension reads it from disk on every injection.
 - Look for the `<EXTREMELY_IMPORTANT>` tag in the session messages. If it is already present, the bootstrap correctly deduplicates and skips re-injection.
 
@@ -239,6 +233,11 @@ Runs 163 tests across 4 test files using Node.js built-in test runner. Tests ver
 - The bootstrap must be injected first (see above). Without it, skills are discovered but never invoked automatically.
 - Verify skills are discovered: use `/skill:` in Pi to list available skills.
 - Check that `references/pi-tools.md` exists and is readable. A missing tool mapping means the agent may not know how to invoke Pi's tools when a skill asks it to.
+
+### Subagent ignores its instructions or prints tool calls as text
+
+- If `PI_SUBAGENT_PROMPT_MODE=lean` is set, agents receive only a role line, not their instructions. Unset it unless your model needs it.
+- If you run a local model and the child output contains raw `<tool_call>` text, try `PI_SUBAGENT_PROMPT_MODE=lean`.
 
 ### Subagent tool not available
 
@@ -250,7 +249,7 @@ Runs 163 tests across 4 test files using Node.js built-in test runner. Tests ver
 - Agent files must be in `~/.pi/agent/agents/` (user scope) or `.pi/agents/` (project scope).
 - Each file must have valid YAML frontmatter with at least `name` and `description` fields.
 - File extension must be `.md`.
-- If using project agents, pass `agentScope: "both"` or `agentScope: "project"` to the subagent tool.
+- If the call passed `agentScope: "user"`, project agents are not searched (and vice versa).
 
 ### Todo state lost
 
@@ -260,14 +259,14 @@ Runs 163 tests across 4 test files using Node.js built-in test runner. Tests ver
 ### `pi install` fails with "Could not resolve host"
 
 - Use the full path: `pi install git:github.com/yoda-digital/pi-superpowers` (not just `git:yoda-digital/...`).
-- If the repo is private, use the manual symlink installation (Option B) instead, since `pi install git:` clones via HTTPS without auth.
+- If the repo is private, clone it yourself and install the local checkout (Option B), since `pi install git:` clones via HTTPS without auth.
 
 ## Contributing
 
 1. Fork and clone.
 2. Make changes to extensions in `extensions/`, agent definitions in `agents/`, or tool mapping in `references/`.
 3. Skills in `skills/` are from upstream [Superpowers](https://github.com/obra/superpowers). To modify skills, contribute upstream and sync here.
-4. Run `bash tests/run.sh` to verify changes.
+4. Run `npm test` to verify changes. Put new logic in `extensions/lib/` (no runtime imports from Pi) so the tests can import it.
 5. Test with a real Pi session: run the acceptance test ("Let's make a react todo list") and confirm brainstorming auto-triggers.
 6. Open a PR with a description of the problem you solved and how you tested.
 

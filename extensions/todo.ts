@@ -12,32 +12,18 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-
-// ---------------------------------------------------------------------------
-// State model
-// ---------------------------------------------------------------------------
-
-const ACTIONS = ["list", "add", "toggle", "remove", "rename", "in_progress", "clear"] as const;
-const PRIORITIES = ["low", "medium", "high"] as const;
-
-type Action = (typeof ACTIONS)[number];
-type Priority = (typeof PRIORITIES)[number];
-
-interface Todo {
-	id: number;
-	text: string;
-	done: boolean;
-	inProgress: boolean;
-	priority: Priority;
-	createdAt: number;
-}
-
-interface TodoDetails {
-	action: Action;
-	todos: Todo[];
-	nextId: number;
-	error?: string;
-}
+import {
+	ACTIONS,
+	applyTodoAction,
+	EMPTY_TODO_STATE,
+	PRIORITIES,
+	type Priority,
+	reconstructTodoState,
+	summarizeTodos,
+	type Todo,
+	type TodoDetails,
+	type TodoState,
+} from "./lib/todo-state.ts";
 
 // ---------------------------------------------------------------------------
 // Tool parameter schema (erasable — no `enum`, uses StringEnum)
@@ -65,17 +51,6 @@ function priorityIndicator(p: Priority, theme: Theme): string {
 	}
 }
 
-function priorityLabel(p: Priority): string {
-	switch (p) {
-		case "high":
-			return "[!!!]";
-		case "medium":
-			return "[!!]";
-		case "low":
-			return "[!]";
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Status display helpers
 // ---------------------------------------------------------------------------
@@ -84,12 +59,6 @@ function statusIndicator(todo: Todo, theme: Theme): string {
 	if (todo.done) return theme.fg("success", "✓");
 	if (todo.inProgress) return theme.fg("warning", "◐");
 	return theme.fg("dim", "○");
-}
-
-function statusPlaintext(todo: Todo): string {
-	if (todo.done) return "x";
-	if (todo.inProgress) return "~";
-	return " ";
 }
 
 // ---------------------------------------------------------------------------
@@ -135,12 +104,10 @@ class TodoListComponent {
 		if (this.todos.length === 0) {
 			lines.push(truncateToWidth(`  ${th.fg("dim", "No todos yet. Ask the agent to add some!")}`, width));
 		} else {
-			const done = this.todos.filter((t) => t.done).length;
-			const inProg = this.todos.filter((t) => t.inProgress && !t.done).length;
-			const total = this.todos.length;
+			const { done, inProgress, total } = summarizeTodos(this.todos);
 
 			let summary = `${done}/${total} completed`;
-			if (inProg > 0) summary += `, ${inProg} in progress`;
+			if (inProgress > 0) summary += `, ${inProgress} in progress`;
 			lines.push(truncateToWidth(`  ${th.fg("muted", summary)}`, width));
 			lines.push("");
 
@@ -173,28 +140,11 @@ class TodoListComponent {
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
-	let todos: Todo[] = [];
-	let nextId = 1;
+	let state: TodoState = EMPTY_TODO_STATE;
 
-	/**
-	 * Reconstruct state by replaying every `todo` tool result in the current
-	 * branch. Each result carries a full snapshot, so the last one wins.
-	 */
+	/** Rebuild state from the `todo` tool-result snapshots on the current branch. */
 	const reconstructState = (ctx: ExtensionContext) => {
-		todos = [];
-		nextId = 1;
-
-		for (const entry of ctx.sessionManager.getBranch()) {
-			if (entry.type !== "message") continue;
-			const msg = entry.message;
-			if (msg.role !== "toolResult" || msg.toolName !== "todo") continue;
-
-			const details = msg.details as TodoDetails | undefined;
-			if (details) {
-				todos = details.todos;
-				nextId = details.nextId;
-			}
-		}
+		state = reconstructTodoState(ctx.sessionManager.getBranch());
 	};
 
 	// ── pi-statusbar integration ─────────────────────────────────────
@@ -210,17 +160,15 @@ export default function (pi: ExtensionAPI) {
 					position: "left" as const,
 					priority: 45,
 					render: (theme: { fg(color: string, text: string): string }) => {
-						if (todos.length === 0) return null;
+						if (state.todos.length === 0) return null;
 
-						const done = todos.filter((t) => t.done).length;
-						const inProg = todos.filter((t) => t.inProgress && !t.done).length;
-						const pending = todos.length - done - inProg;
+						const { done, inProgress, pending, total } = summarizeTodos(state.todos);
 						const parts: string[] = [theme.fg("accent", "TODO")];
 
 						if (done > 0) parts.push(theme.fg("success", `${done}✓`));
-						if (inProg > 0) parts.push(theme.fg("warning", `${inProg}◐`));
+						if (inProgress > 0) parts.push(theme.fg("warning", `${inProgress}◐`));
 						if (pending > 0) parts.push(theme.fg("dim", `${pending}○`));
-						parts.push(theme.fg("muted", `${done}/${todos.length}`));
+						parts.push(theme.fg("muted", `${done}/${total}`));
 
 						return parts.join(" ");
 					},
@@ -257,264 +205,14 @@ export default function (pi: ExtensionAPI) {
 		parameters: TodoParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			const result = await (async () => { switch (params.action) {
-				// ---- list -------------------------------------------------------
-				case "list":
-					return {
-						content: [
-							{
-								type: "text",
-								text: todos.length
-									? todos
-											.map(
-												(t) =>
-													`[${statusPlaintext(t)}] #${t.id} ${priorityLabel(t.priority)}: ${t.text}`,
-											)
-											.join("\n")
-									: "No todos",
-							},
-						],
-						details: { action: "list", todos: [...todos], nextId } as TodoDetails,
-					};
-
-				// ---- add --------------------------------------------------------
-				case "add": {
-					if (!params.text) {
-						return {
-							content: [{ type: "text", text: "Error: text required for add" }],
-							details: {
-								action: "add",
-								todos: [...todos],
-								nextId,
-								error: "text required",
-							} as TodoDetails,
-						};
-					}
-					const priority: Priority = params.priority ?? "medium";
-					const newTodo: Todo = {
-						id: nextId++,
-						text: params.text,
-						done: false,
-						inProgress: false,
-						priority,
-						createdAt: Date.now(),
-					};
-					todos.push(newTodo);
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Added todo #${newTodo.id} ${priorityLabel(priority)}: ${newTodo.text}`,
-							},
-						],
-						details: { action: "add", todos: [...todos], nextId } as TodoDetails,
-					};
-				}
-
-				// ---- toggle -----------------------------------------------------
-				case "toggle": {
-					if (params.id === undefined) {
-						return {
-							content: [{ type: "text", text: "Error: id required for toggle" }],
-							details: {
-								action: "toggle",
-								todos: [...todos],
-								nextId,
-								error: "id required",
-							} as TodoDetails,
-						};
-					}
-					const todo = todos.find((t) => t.id === params.id);
-					if (!todo) {
-						return {
-							content: [{ type: "text", text: `Todo #${params.id} not found` }],
-							details: {
-								action: "toggle",
-								todos: [...todos],
-								nextId,
-								error: `#${params.id} not found`,
-							} as TodoDetails,
-						};
-					}
-					todo.done = !todo.done;
-					if (todo.done) todo.inProgress = false;
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Todo #${todo.id} ${todo.done ? "completed" : "uncompleted"}`,
-							},
-						],
-						details: { action: "toggle", todos: [...todos], nextId } as TodoDetails,
-					};
-				}
-
-				// ---- remove -----------------------------------------------------
-				case "remove": {
-					if (params.id === undefined) {
-						return {
-							content: [{ type: "text", text: "Error: id required for remove" }],
-							details: {
-								action: "remove",
-								todos: [...todos],
-								nextId,
-								error: "id required",
-							} as TodoDetails,
-						};
-					}
-					const idx = todos.findIndex((t) => t.id === params.id);
-					if (idx === -1) {
-						return {
-							content: [{ type: "text", text: `Todo #${params.id} not found` }],
-							details: {
-								action: "remove",
-								todos: [...todos],
-								nextId,
-								error: `#${params.id} not found`,
-							} as TodoDetails,
-						};
-					}
-					const removed = todos.splice(idx, 1)[0];
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Removed todo #${removed.id}: ${removed.text}`,
-							},
-						],
-						details: { action: "remove", todos: [...todos], nextId } as TodoDetails,
-					};
-				}
-
-				// ---- rename -----------------------------------------------------
-				case "rename": {
-					if (params.id === undefined) {
-						return {
-							content: [{ type: "text", text: "Error: id required for rename" }],
-							details: {
-								action: "rename",
-								todos: [...todos],
-								nextId,
-								error: "id required",
-							} as TodoDetails,
-						};
-					}
-					if (!params.text) {
-						return {
-							content: [{ type: "text", text: "Error: text required for rename" }],
-							details: {
-								action: "rename",
-								todos: [...todos],
-								nextId,
-								error: "text required",
-							} as TodoDetails,
-						};
-					}
-					const target = todos.find((t) => t.id === params.id);
-					if (!target) {
-						return {
-							content: [{ type: "text", text: `Todo #${params.id} not found` }],
-							details: {
-								action: "rename",
-								todos: [...todos],
-								nextId,
-								error: `#${params.id} not found`,
-							} as TodoDetails,
-						};
-					}
-					const oldText = target.text;
-					target.text = params.text;
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Renamed todo #${target.id}: "${oldText}" -> "${target.text}"`,
-							},
-						],
-						details: { action: "rename", todos: [...todos], nextId } as TodoDetails,
-					};
-				}
-
-				// ---- in_progress ------------------------------------------------
-				case "in_progress": {
-					if (params.id === undefined) {
-						return {
-							content: [{ type: "text", text: "Error: id required for in_progress" }],
-							details: {
-								action: "in_progress",
-								todos: [...todos],
-								nextId,
-								error: "id required",
-							} as TodoDetails,
-						};
-					}
-					const wip = todos.find((t) => t.id === params.id);
-					if (!wip) {
-						return {
-							content: [{ type: "text", text: `Todo #${params.id} not found` }],
-							details: {
-								action: "in_progress",
-								todos: [...todos],
-								nextId,
-								error: `#${params.id} not found`,
-							} as TodoDetails,
-						};
-					}
-					if (wip.done) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: `Todo #${wip.id} is already completed`,
-								},
-							],
-							details: {
-								action: "in_progress",
-								todos: [...todos],
-								nextId,
-								error: `#${wip.id} already completed`,
-							} as TodoDetails,
-						};
-					}
-					wip.inProgress = !wip.inProgress;
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Todo #${wip.id} ${wip.inProgress ? "started" : "paused"}`,
-							},
-						],
-						details: { action: "in_progress", todos: [...todos], nextId } as TodoDetails,
-					};
-				}
-
-				// ---- clear ------------------------------------------------------
-				case "clear": {
-					const count = todos.length;
-					todos = [];
-					nextId = 1;
-					return {
-						content: [{ type: "text", text: `Cleared ${count} todos` }],
-						details: { action: "clear", todos: [], nextId: 1 } as TodoDetails,
-					};
-				}
-
-				// ---- fallback ---------------------------------------------------
-				default:
-					return {
-						content: [{ type: "text", text: `Unknown action: ${params.action}` }],
-						details: {
-							action: "list",
-							todos: [...todos],
-							nextId,
-							error: `unknown action: ${params.action}`,
-						} as TodoDetails,
-					};
-			}
-			})();
+			const result = applyTodoAction(state, params);
+			state = result.state;
 			// Notify statusbar after any state-changing action.
 			if (params.action !== "list") notifyStatusbar();
-			return result;
+			return {
+				content: [{ type: "text", text: result.text }],
+				details: result.details,
+			};
 		},
 
 		// -----------------------------------------------------------------
@@ -622,7 +320,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
-				return new TodoListComponent(todos, theme, () => done());
+				return new TodoListComponent(state.todos, theme, () => done());
 			});
 		},
 	});

@@ -18,18 +18,28 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentToolResult, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	CONFIG_DIR_NAME,
 	type ExtensionAPI,
-	getAgentDir,
 	getMarkdownTheme,
+	type ThemeColor,
+	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import {
+	buildChildArgs,
+	childModelLabel,
+	type DispatchDefaults,
+	getFinalOutput,
+	type PromptMode,
+	resolvePromptMode,
+	shouldAppendSystemPrompt,
+} from "../lib/subagent-child.ts";
+import { type AgentConfig, type AgentScope, DEFAULT_AGENT_SCOPE, discoverAgents, getUserAgentsDir } from "./agents.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -72,7 +82,7 @@ function formatUsageStats(
 function formatToolCall(
 	toolName: string,
 	args: Record<string, unknown>,
-	themeFg: (color: string, text: string) => string,
+	themeFg: (color: ThemeColor, text: string) => string,
 ): string {
 	const shortenPath = (p: string) => {
 		const home = os.homedir();
@@ -168,31 +178,6 @@ interface SubagentDetails {
 	results: SingleResult[];
 }
 
-function getFinalOutput(messages: Message[]): string {
-	// First pass: look for assistant text (the normal path for Claude and capable models)
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text" && part.text.trim()) return part.text;
-			}
-		}
-	}
-	// Fallback: some models (e.g. local Ollama/Qwen) stop after tool calls without
-	// producing a final text summary. Collect tool results as the output instead.
-	const toolOutputs: string[] = [];
-	for (const msg of messages) {
-		if (msg.role === "toolResult") {
-			for (const part of msg.content) {
-				if (part.type === "text" && part.text.trim()) {
-					toolOutputs.push(part.text.trim());
-				}
-			}
-		}
-	}
-	return toolOutputs.length > 0 ? toolOutputs.join("\n\n") : "";
-}
-
 function isFailedResult(result: SingleResult): boolean {
 	return result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
 }
@@ -251,6 +236,15 @@ async function mapWithConcurrencyLimit<TIn, TOut>(
 	return results;
 }
 
+async function writePromptToTempFile(agentName: string, prompt: string): Promise<{ dir: string; filePath: string }> {
+	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
+	const safeName = agentName.replace(/[^\w.-]+/g, "_");
+	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
+	await withFileMutationQueue(filePath, async () => {
+		await fs.promises.writeFile(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
+	});
+	return { dir: tmpDir, filePath };
+}
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
@@ -270,14 +264,10 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
-interface DispatchDefaults {
-	model?: string;
-	thinkingLevel?: ThinkingLevel;
-}
-
 async function runSingleAgent(
 	defaultCwd: string,
 	dispatchDefaults: DispatchDefaults,
+	promptMode: PromptMode,
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
@@ -303,31 +293,8 @@ async function runSingleAgent(
 		};
 	}
 
-	// Build args to match the exact pattern proven to work in manual testing:
-	//   pi --mode json -p --no-session --no-extensions --no-skills
-	//      --no-context-files --no-themes --approve --tools <list> "Task: ..."
-	// Key lessons from debugging Qwen/Ollama tool calling:
-	//   - Do NOT pass --model explicitly (let child resolve default from settings.json;
-	//     passing provider/model format changes Pi's model resolution path and degrades
-	//     Ollama's tool call formatting)
-	//   - Do NOT use --append-system-prompt (adds system prompt overhead that pushes
-	//     local models toward XML text output instead of structured tool_calls)
-	//   - Keep the prompt SHORT — agent role goes as a one-line prefix, not full body
-	const args: string[] = [
-		"--mode", "json", "-p", "--no-session",
-		"--no-extensions",
-		"--no-skills",
-		"--no-context-files",
-		"--no-themes",
-		"--approve",
-	];
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
-
-	// Model: do NOT pass --model explicitly — child uses default from settings.json.
-	// This matches the manual test pattern that works reliably with Ollama.
-	// The explicit provider/model format (nalyk-ollama/qwen38-27b-shared) causes Pi
-	// to resolve the model through a different path that degrades tool calling.
-	const model = dispatchDefaults.model;
+	let tmpPromptDir: string | null = null;
+	let tmpPromptPath: string | null = null;
 
 	const currentResult: SingleResult = {
 		agent: agentName,
@@ -337,7 +304,6 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model,
 		step,
 	};
 
@@ -351,12 +317,20 @@ async function runSingleAgent(
 	};
 
 	try {
-		// Short prompt: agent role as a one-line prefix + task.
-		// Full agent body is NOT included — it adds context overhead that degrades
-		// tool calling on local models. The agent's tool restrictions (--tools flag)
-		// already constrain behavior.
-		const rolePrefix = agent.description ? `[Role: ${agent.name} — ${agent.description}] ` : "";
-		args.push(`${rolePrefix}Task: ${task}`);
+		if (shouldAppendSystemPrompt(agent, promptMode)) {
+			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
+			tmpPromptDir = tmp.dir;
+			tmpPromptPath = tmp.filePath;
+		}
+		const { args, model } = buildChildArgs({
+			agent,
+			task,
+			dispatchDefaults,
+			promptMode,
+			systemPromptFile: tmpPromptPath ?? undefined,
+		});
+		// The model passed to the child; in lean mode it is unknown until the child reports it.
+		currentResult.model = model;
 		let wasAborted = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
@@ -392,7 +366,7 @@ async function runSingleAgent(
 							currentResult.usage.cost += (usage.cost as { total?: number } | undefined)?.total || 0;
 							currentResult.usage.contextTokens = usage.totalTokens || 0;
 						}
-						if (!currentResult.model && msg.model) currentResult.model = msg.model;
+						if (!currentResult.model) currentResult.model = childModelLabel(msg);
 						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
 						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
 					}
@@ -442,6 +416,18 @@ async function runSingleAgent(
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {
+		if (tmpPromptPath)
+			try {
+				fs.unlinkSync(tmpPromptPath);
+			} catch {
+				/* ignore */
+			}
+		if (tmpPromptDir)
+			try {
+				fs.rmdirSync(tmpPromptDir);
+			} catch {
+				/* ignore */
+			}
 	}
 }
 
@@ -458,8 +444,8 @@ const ChainItem = Type.Object({
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to search. Default: "both" (user + project agents).',
-	default: "both",
+	description: `Which agent directories to search. Default: "${DEFAULT_AGENT_SCOPE}" (user + project agents).`,
+	default: DEFAULT_AGENT_SCOPE,
 });
 
 const SubagentParams = Type.Object({
@@ -481,17 +467,18 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
-			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
+			`By default both user agents (${getUserAgentsDir()}) and the nearest project's ${CONFIG_DIR_NAME}/agents are searched; a project agent overrides a user agent with the same name.`,
+			`Set agentScope to "user" or "project" to restrict the search.`,
 		].join(" "),
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "both";
+			const agentScope: AgentScope = params.agentScope ?? DEFAULT_AGENT_SCOPE;
 			const dispatchDefaults: DispatchDefaults = {
 				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
 				thinkingLevel: ctx.thinkingLevel,
 			};
+			const promptMode = resolvePromptMode(process.env);
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
@@ -579,6 +566,7 @@ export default function (pi: ExtensionAPI) {
 					const result = await runSingleAgent(
 						ctx.cwd,
 						dispatchDefaults,
+						promptMode,
 						agents,
 						step.agent,
 						taskWithContext,
@@ -652,6 +640,7 @@ export default function (pi: ExtensionAPI) {
 					const result = await runSingleAgent(
 						ctx.cwd,
 						dispatchDefaults,
+						promptMode,
 						agents,
 						t.agent,
 						t.task,
@@ -695,6 +684,7 @@ export default function (pi: ExtensionAPI) {
 				const result = await runSingleAgent(
 					ctx.cwd,
 					dispatchDefaults,
+					promptMode,
 					agents,
 					params.agent,
 					params.task,
@@ -727,7 +717,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "both";
+			const scope: AgentScope = args.agentScope ?? DEFAULT_AGENT_SCOPE;
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +

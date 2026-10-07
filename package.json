@@ -4,6 +4,9 @@
   "description": "Superpowers methodology + companion tools for Pi coding agent",
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
   "pi": {
     "extensions": [
       "extensions/superpowers.ts",

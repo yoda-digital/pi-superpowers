@@ -1,482 +1,198 @@
 /**
- * Tests for the todo tool logic (extensions/todo.ts).
- *
- * Since todo.ts imports from Pi packages, we cannot import it directly.
- * We extract the pure state-management logic (the switch cases in execute)
- * into a testable harness that simulates the tool's behavior without TUI
- * or Pi runtime dependencies.
+ * Tests for the todo state machine (extensions/lib/todo-state.ts) — the real
+ * reducer that extensions/todo.ts calls from its tool handler.
  */
 
-import { describe, it, beforeEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-// ---------------------------------------------------------------------------
-// Re-implement the todo state machine from todo.ts
-// ---------------------------------------------------------------------------
+import {
+  ACTIONS,
+  EMPTY_TODO_STATE,
+  PRIORITIES,
+  applyTodoAction,
+  formatTodoList,
+  reconstructTodoState,
+  summarizeTodos,
+} from "../extensions/lib/todo-state.ts";
 
-const ACTIONS = ["list", "add", "toggle", "remove", "rename", "in_progress", "clear"];
-const PRIORITIES = ["low", "medium", "high"];
+const NOW = 1_700_000_000_000;
+const apply = (state, params) => applyTodoAction(state, params, NOW);
 
-/**
- * A self-contained todo manager that mirrors the state logic in todo.ts.
- * Each method returns a result object matching the TodoDetails shape.
- */
-class TodoManager {
-  constructor() {
-    this.todos = [];
-    this.nextId = 1;
+/** Apply a sequence of actions, returning the final result. */
+function run(...actions) {
+  let state = EMPTY_TODO_STATE;
+  let result;
+  for (const a of actions) {
+    result = apply(state, a);
+    state = result.state;
   }
-
-  _snapshot() {
-    return { todos: [...this.todos.map((t) => ({ ...t }))], nextId: this.nextId };
-  }
-
-  list() {
-    return {
-      action: "list",
-      ...this._snapshot(),
-      text: this.todos.length
-        ? this.todos.map((t) => `[${t.done ? "x" : t.inProgress ? "~" : " "}] #${t.id}: ${t.text}`).join("\n")
-        : "No todos",
-    };
-  }
-
-  add(text, priority) {
-    if (!text) {
-      return { action: "add", ...this._snapshot(), error: "text required" };
-    }
-    const p = priority ?? "medium";
-    const newTodo = {
-      id: this.nextId++,
-      text,
-      done: false,
-      inProgress: false,
-      priority: p,
-      createdAt: Date.now(),
-    };
-    this.todos.push(newTodo);
-    return { action: "add", ...this._snapshot() };
-  }
-
-  toggle(id) {
-    if (id === undefined) {
-      return { action: "toggle", ...this._snapshot(), error: "id required" };
-    }
-    const todo = this.todos.find((t) => t.id === id);
-    if (!todo) {
-      return { action: "toggle", ...this._snapshot(), error: `#${id} not found` };
-    }
-    todo.done = !todo.done;
-    if (todo.done) todo.inProgress = false;
-    return { action: "toggle", ...this._snapshot() };
-  }
-
-  remove(id) {
-    if (id === undefined) {
-      return { action: "remove", ...this._snapshot(), error: "id required" };
-    }
-    const idx = this.todos.findIndex((t) => t.id === id);
-    if (idx === -1) {
-      return { action: "remove", ...this._snapshot(), error: `#${id} not found` };
-    }
-    this.todos.splice(idx, 1);
-    return { action: "remove", ...this._snapshot() };
-  }
-
-  rename(id, text) {
-    if (id === undefined) {
-      return { action: "rename", ...this._snapshot(), error: "id required" };
-    }
-    if (!text) {
-      return { action: "rename", ...this._snapshot(), error: "text required" };
-    }
-    const target = this.todos.find((t) => t.id === id);
-    if (!target) {
-      return { action: "rename", ...this._snapshot(), error: `#${id} not found` };
-    }
-    target.text = text;
-    return { action: "rename", ...this._snapshot() };
-  }
-
-  inProgress(id) {
-    if (id === undefined) {
-      return { action: "in_progress", ...this._snapshot(), error: "id required" };
-    }
-    const wip = this.todos.find((t) => t.id === id);
-    if (!wip) {
-      return { action: "in_progress", ...this._snapshot(), error: `#${id} not found` };
-    }
-    if (wip.done) {
-      return { action: "in_progress", ...this._snapshot(), error: `#${id} already completed` };
-    }
-    wip.inProgress = !wip.inProgress;
-    return { action: "in_progress", ...this._snapshot() };
-  }
-
-  clear() {
-    this.todos = [];
-    this.nextId = 1;
-    return { action: "clear", todos: [], nextId: 1 };
-  }
-
-  /**
-   * Reconstruct state from a list of details snapshots (simulating the
-   * session-entry replay in reconstructState).
-   */
-  static fromSnapshots(snapshots) {
-    const mgr = new TodoManager();
-    for (const snap of snapshots) {
-      if (snap && snap.todos !== undefined && snap.nextId !== undefined) {
-        mgr.todos = snap.todos.map((t) => ({ ...t }));
-        mgr.nextId = snap.nextId;
-      }
-    }
-    return mgr;
-  }
+  return result;
 }
 
+const add = (text, priority) => ({ action: "add", text, priority });
+
 // ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
-describe("todo: add", () => {
-  let mgr;
-  beforeEach(() => {
-    mgr = new TodoManager();
+describe("add", () => {
+  it("creates todos with incrementing ids and medium default priority", () => {
+    const { state, text } = run(add("a"), add("b", "high"));
+    assert.deepEqual(state.todos.map((t) => [t.id, t.text, t.priority]), [[1, "a", "medium"], [2, "b", "high"]]);
+    assert.equal(state.nextId, 3);
+    assert.equal(text, "Added todo #2 [!!!]: b");
   });
 
-  it("creates a todo with incrementing ID", () => {
-    const r1 = mgr.add("First task");
-    assert.equal(r1.todos.length, 1);
-    assert.equal(r1.todos[0].id, 1);
-    assert.equal(r1.todos[0].text, "First task");
-
-    const r2 = mgr.add("Second task");
-    assert.equal(r2.todos.length, 2);
-    assert.equal(r2.todos[1].id, 2);
+  it("starts not done, not in progress, stamped with the given time", () => {
+    const [t] = run(add("a")).state.todos;
+    assert.equal(t.done, false);
+    assert.equal(t.inProgress, false);
+    assert.equal(t.createdAt, NOW);
   });
 
-  it("defaults priority to medium", () => {
-    mgr.add("Task");
-    assert.equal(mgr.todos[0].priority, "medium");
-  });
-
-  it("accepts explicit priority", () => {
-    mgr.add("Urgent", "high");
-    assert.equal(mgr.todos[0].priority, "high");
-
-    mgr.add("Later", "low");
-    assert.equal(mgr.todos[1].priority, "low");
-  });
-
-  it("starts with done=false and inProgress=false", () => {
-    mgr.add("New task");
-    assert.equal(mgr.todos[0].done, false);
-    assert.equal(mgr.todos[0].inProgress, false);
-  });
-
-  it("has a createdAt timestamp", () => {
-    const before = Date.now();
-    mgr.add("Timed task");
-    const after = Date.now();
-    assert.ok(mgr.todos[0].createdAt >= before);
-    assert.ok(mgr.todos[0].createdAt <= after);
-  });
-
-  it("returns error when text is missing", () => {
-    const result = mgr.add(undefined);
-    assert.equal(result.error, "text required");
-    assert.equal(result.todos.length, 0);
-  });
-
-  it("returns error when text is empty string", () => {
-    const result = mgr.add("");
-    assert.equal(result.error, "text required");
+  it("rejects missing or empty text without changing state", () => {
+    for (const text of [undefined, ""]) {
+      const r = apply(EMPTY_TODO_STATE, { action: "add", text });
+      assert.equal(r.details.error, "text required");
+      assert.equal(r.state, EMPTY_TODO_STATE);
+    }
   });
 });
 
-describe("todo: toggle", () => {
-  let mgr;
-  beforeEach(() => {
-    mgr = new TodoManager();
-    mgr.add("Task 1");
-    mgr.add("Task 2");
+describe("toggle", () => {
+  it("flips done both ways and clears inProgress when completing", () => {
+    let r = run(add("a"), { action: "in_progress", id: 1 }, { action: "toggle", id: 1 });
+    assert.equal(r.state.todos[0].done, true);
+    assert.equal(r.state.todos[0].inProgress, false);
+    assert.equal(r.text, "Todo #1 completed");
+    r = apply(r.state, { action: "toggle", id: 1 });
+    assert.equal(r.state.todos[0].done, false);
+    assert.equal(r.text, "Todo #1 uncompleted");
   });
 
-  it("flips done from false to true", () => {
-    mgr.toggle(1);
-    assert.equal(mgr.todos[0].done, true);
-  });
-
-  it("flips done from true to false", () => {
-    mgr.toggle(1);
-    mgr.toggle(1);
-    assert.equal(mgr.todos[0].done, false);
-  });
-
-  it("clears inProgress when marking done", () => {
-    mgr.inProgress(1);
-    assert.equal(mgr.todos[0].inProgress, true);
-    mgr.toggle(1); // mark done
-    assert.equal(mgr.todos[0].done, true);
-    assert.equal(mgr.todos[0].inProgress, false);
-  });
-
-  it("returns error when id is missing", () => {
-    const result = mgr.toggle(undefined);
-    assert.equal(result.error, "id required");
-  });
-
-  it("returns error when id not found", () => {
-    const result = mgr.toggle(999);
-    assert.equal(result.error, "#999 not found");
-  });
-
-  it("does not affect other todos", () => {
-    mgr.toggle(1);
-    assert.equal(mgr.todos[0].done, true);
-    assert.equal(mgr.todos[1].done, false);
+  it("reports missing and unknown ids", () => {
+    assert.equal(apply(EMPTY_TODO_STATE, { action: "toggle" }).details.error, "id required");
+    assert.equal(apply(EMPTY_TODO_STATE, { action: "toggle", id: 9 }).details.error, "#9 not found");
   });
 });
 
-describe("todo: remove", () => {
-  let mgr;
-  beforeEach(() => {
-    mgr = new TodoManager();
-    mgr.add("Task 1");
-    mgr.add("Task 2");
-    mgr.add("Task 3");
+describe("remove", () => {
+  it("deletes by id, keeps others, never reuses ids", () => {
+    const r = run(add("a"), add("b"), { action: "remove", id: 1 }, add("c"));
+    assert.deepEqual(r.state.todos.map((t) => [t.id, t.text]), [[2, "b"], [3, "c"]]);
   });
 
-  it("deletes a todo by ID", () => {
-    mgr.remove(2);
-    assert.equal(mgr.todos.length, 2);
-    assert.ok(!mgr.todos.find((t) => t.id === 2));
-  });
-
-  it("preserves remaining todos", () => {
-    mgr.remove(2);
-    assert.equal(mgr.todos[0].id, 1);
-    assert.equal(mgr.todos[1].id, 3);
-  });
-
-  it("returns error when id is missing", () => {
-    const result = mgr.remove(undefined);
-    assert.equal(result.error, "id required");
-    assert.equal(mgr.todos.length, 3);
-  });
-
-  it("returns error when id not found", () => {
-    const result = mgr.remove(999);
-    assert.equal(result.error, "#999 not found");
-    assert.equal(mgr.todos.length, 3);
+  it("reports missing and unknown ids", () => {
+    assert.equal(apply(EMPTY_TODO_STATE, { action: "remove" }).details.error, "id required");
+    assert.equal(apply(EMPTY_TODO_STATE, { action: "remove", id: 1 }).details.error, "#1 not found");
   });
 });
 
-describe("todo: rename", () => {
-  let mgr;
-  beforeEach(() => {
-    mgr = new TodoManager();
-    mgr.add("Original text");
+describe("rename", () => {
+  it("updates text", () => {
+    const r = run(add("old"), { action: "rename", id: 1, text: "new" });
+    assert.equal(r.state.todos[0].text, "new");
+    assert.equal(r.text, 'Renamed todo #1: "old" -> "new"');
   });
 
-  it("updates the text of a todo", () => {
-    mgr.rename(1, "Updated text");
-    assert.equal(mgr.todos[0].text, "Updated text");
-  });
-
-  it("returns error when id is missing", () => {
-    const result = mgr.rename(undefined, "New text");
-    assert.equal(result.error, "id required");
-  });
-
-  it("returns error when text is missing", () => {
-    const result = mgr.rename(1, undefined);
-    assert.equal(result.error, "text required");
-  });
-
-  it("returns error when id not found", () => {
-    const result = mgr.rename(999, "New text");
-    assert.equal(result.error, "#999 not found");
+  it("validates id and text", () => {
+    const s = run(add("a")).state;
+    assert.equal(apply(s, { action: "rename", text: "x" }).details.error, "id required");
+    assert.equal(apply(s, { action: "rename", id: 1 }).details.error, "text required");
+    assert.equal(apply(s, { action: "rename", id: 5, text: "x" }).details.error, "#5 not found");
   });
 });
 
-describe("todo: in_progress", () => {
-  let mgr;
-  beforeEach(() => {
-    mgr = new TodoManager();
-    mgr.add("Task 1");
+describe("in_progress", () => {
+  it("toggles in-progress on and off", () => {
+    let r = run(add("a"), { action: "in_progress", id: 1 });
+    assert.equal(r.state.todos[0].inProgress, true);
+    assert.equal(r.text, "Todo #1 started");
+    r = apply(r.state, { action: "in_progress", id: 1 });
+    assert.equal(r.state.todos[0].inProgress, false);
+    assert.equal(r.text, "Todo #1 paused");
   });
 
-  it("marks a todo as in-progress", () => {
-    mgr.inProgress(1);
-    assert.equal(mgr.todos[0].inProgress, true);
-  });
-
-  it("toggles in-progress off when called again", () => {
-    mgr.inProgress(1);
-    mgr.inProgress(1);
-    assert.equal(mgr.todos[0].inProgress, false);
-  });
-
-  it("returns error when the todo is already completed", () => {
-    mgr.toggle(1); // mark done
-    const result = mgr.inProgress(1);
-    assert.equal(result.error, "#1 already completed");
-  });
-
-  it("returns error when id is missing", () => {
-    const result = mgr.inProgress(undefined);
-    assert.equal(result.error, "id required");
-  });
-
-  it("returns error when id not found", () => {
-    const result = mgr.inProgress(999);
-    assert.equal(result.error, "#999 not found");
+  it("refuses completed todos", () => {
+    const r = run(add("a"), { action: "toggle", id: 1 }, { action: "in_progress", id: 1 });
+    assert.equal(r.details.error, "#1 already completed");
   });
 });
 
-describe("todo: clear", () => {
-  let mgr;
-  beforeEach(() => {
-    mgr = new TodoManager();
-    mgr.add("Task 1");
-    mgr.add("Task 2");
-    mgr.add("Task 3");
+describe("clear and list", () => {
+  it("clear empties the list and resets ids", () => {
+    const r = run(add("a"), add("b"), { action: "clear" });
+    assert.deepEqual(r.state, { todos: [], nextId: 1 });
+    assert.equal(r.text, "Cleared 2 todos");
+    assert.equal(apply(r.state, add("c")).state.todos[0].id, 1);
   });
 
-  it("removes all todos", () => {
-    const result = mgr.clear();
-    assert.equal(result.todos.length, 0);
-    assert.equal(mgr.todos.length, 0);
+  it("list renders status markers and priorities", () => {
+    const s = run(add("a", "low"), add("b"), add("c", "high"), { action: "toggle", id: 1 }, { action: "in_progress", id: 2 }).state;
+    const r = apply(s, { action: "list" });
+    assert.equal(r.text, "[x] #1 [!]: a\n[~] #2 [!!]: b\n[ ] #3 [!!!]: c");
+    assert.equal(r.text, formatTodoList(s.todos));
+    assert.equal(apply(EMPTY_TODO_STATE, { action: "list" }).text, "No todos");
   });
 
-  it("resets nextId to 1", () => {
-    const result = mgr.clear();
-    assert.equal(result.nextId, 1);
-    assert.equal(mgr.nextId, 1);
-  });
-
-  it("nextId increments correctly after clear", () => {
-    mgr.clear();
-    mgr.add("After clear");
-    assert.equal(mgr.todos[0].id, 1);
-    mgr.add("Second after clear");
-    assert.equal(mgr.todos[1].id, 2);
+  it("unknown actions are reported, not thrown", () => {
+    const r = apply(EMPTY_TODO_STATE, { action: "explode" });
+    assert.equal(r.details.error, "unknown action: explode");
   });
 });
 
-describe("todo: list", () => {
-  it("returns 'No todos' for empty list", () => {
-    const mgr = new TodoManager();
-    const result = mgr.list();
-    assert.equal(result.text, "No todos");
-    assert.equal(result.todos.length, 0);
+describe("snapshots are immutable (session branching relies on it)", () => {
+  it("later actions never alter an earlier result's details", () => {
+    const first = run(add("a"));
+    const snapshot = JSON.stringify(first.details);
+    let state = first.state;
+    for (const a of [
+      { action: "in_progress", id: 1 },
+      { action: "toggle", id: 1 },
+      { action: "rename", id: 1, text: "changed" },
+      { action: "remove", id: 1 },
+    ]) {
+      state = apply(state, a).state;
+    }
+    assert.equal(JSON.stringify(first.details), snapshot);
   });
 
-  it("lists all todos with status markers", () => {
-    const mgr = new TodoManager();
-    mgr.add("Pending");
-    mgr.add("In progress");
-    mgr.add("Done");
-    mgr.inProgress(2);
-    mgr.toggle(3);
-
-    const result = mgr.list();
-    assert.ok(result.text.includes("[ ] #1"));
-    assert.ok(result.text.includes("[~] #2"));
-    assert.ok(result.text.includes("[x] #3"));
-  });
-});
-
-describe("todo: state reconstruction from snapshots", () => {
-  it("reconstructs from the last snapshot", () => {
-    const snapshots = [
-      { action: "add", todos: [{ id: 1, text: "A", done: false, inProgress: false, priority: "medium" }], nextId: 2 },
-      { action: "add", todos: [
-        { id: 1, text: "A", done: false, inProgress: false, priority: "medium" },
-        { id: 2, text: "B", done: false, inProgress: false, priority: "high" },
-      ], nextId: 3 },
-      { action: "toggle", todos: [
-        { id: 1, text: "A", done: true, inProgress: false, priority: "medium" },
-        { id: 2, text: "B", done: false, inProgress: false, priority: "high" },
-      ], nextId: 3 },
-    ];
-
-    const mgr = TodoManager.fromSnapshots(snapshots);
-    assert.equal(mgr.todos.length, 2);
-    assert.equal(mgr.todos[0].done, true);
-    assert.equal(mgr.todos[1].done, false);
-    assert.equal(mgr.nextId, 3);
-  });
-
-  it("reconstructs from empty snapshots to empty state", () => {
-    const mgr = TodoManager.fromSnapshots([]);
-    assert.equal(mgr.todos.length, 0);
-    assert.equal(mgr.nextId, 1);
-  });
-
-  it("skips null/undefined entries in snapshots", () => {
-    const snapshots = [
-      null,
-      undefined,
-      { action: "add", todos: [{ id: 1, text: "X", done: false, inProgress: false, priority: "low" }], nextId: 2 },
-    ];
-
-    const mgr = TodoManager.fromSnapshots(snapshots);
-    assert.equal(mgr.todos.length, 1);
-    assert.equal(mgr.todos[0].text, "X");
-    assert.equal(mgr.nextId, 2);
-  });
-
-  it("last snapshot wins (simulates branch replay)", () => {
-    const snapshots = [
-      { action: "add", todos: [{ id: 1, text: "Before", done: false, inProgress: false, priority: "medium" }], nextId: 2 },
-      { action: "clear", todos: [], nextId: 1 },
-    ];
-
-    const mgr = TodoManager.fromSnapshots(snapshots);
-    assert.equal(mgr.todos.length, 0);
-    assert.equal(mgr.nextId, 1);
+  it("does not mutate the input state", () => {
+    const s = run(add("a")).state;
+    const before = JSON.stringify(s);
+    apply(s, { action: "toggle", id: 1 });
+    apply(s, { action: "rename", id: 1, text: "z" });
+    apply(s, { action: "clear" });
+    assert.equal(JSON.stringify(s), before);
   });
 });
 
-describe("todo: nextId behavior", () => {
-  it("increments on each add", () => {
-    const mgr = new TodoManager();
-    assert.equal(mgr.nextId, 1);
-    mgr.add("A");
-    assert.equal(mgr.nextId, 2);
-    mgr.add("B");
-    assert.equal(mgr.nextId, 3);
+describe("reconstructTodoState", () => {
+  const entry = (toolName, details) => ({ type: "message", message: { role: "toolResult", toolName, details } });
+
+  it("takes the last todo snapshot on the branch", () => {
+    const d1 = run(add("a")).details;
+    const d2 = run(add("a"), add("b")).details;
+    const state = reconstructTodoState([entry("todo", d1), { type: "other" }, entry("bash", { todos: [] }), entry("todo", d2)]);
+    assert.deepEqual(state.todos.map((t) => t.text), ["a", "b"]);
+    assert.equal(state.nextId, 3);
   });
 
-  it("does not decrement on remove", () => {
-    const mgr = new TodoManager();
-    mgr.add("A"); // id=1
-    mgr.add("B"); // id=2
-    mgr.remove(1);
-    assert.equal(mgr.nextId, 3, "nextId should not decrease on remove");
-    mgr.add("C"); // id=3
-    assert.equal(mgr.todos[1].id, 3);
-  });
-
-  it("resets to 1 on clear", () => {
-    const mgr = new TodoManager();
-    mgr.add("A");
-    mgr.add("B");
-    assert.equal(mgr.nextId, 3);
-    mgr.clear();
-    assert.equal(mgr.nextId, 1);
+  it("returns the empty state when there are no snapshots", () => {
+    assert.deepEqual(reconstructTodoState([]), { todos: [], nextId: 1 });
+    assert.deepEqual(reconstructTodoState([entry("todo", undefined)]), { todos: [], nextId: 1 });
   });
 });
 
-describe("todo: ACTIONS and PRIORITIES constants", () => {
-  it("defines the expected actions", () => {
-    assert.deepEqual(ACTIONS, ["list", "add", "toggle", "remove", "rename", "in_progress", "clear"]);
+describe("summarizeTodos", () => {
+  it("counts done, in progress and pending", () => {
+    const s = run(add("a"), add("b"), add("c"), { action: "toggle", id: 1 }, { action: "in_progress", id: 2 }).state;
+    assert.deepEqual(summarizeTodos(s.todos), { done: 1, inProgress: 1, pending: 1, total: 3 });
   });
+});
 
-  it("defines the expected priorities", () => {
-    assert.deepEqual(PRIORITIES, ["low", "medium", "high"]);
+describe("constants", () => {
+  it("expose the supported actions and priorities", () => {
+    assert.deepEqual([...ACTIONS], ["list", "add", "toggle", "remove", "rename", "in_progress", "clear"]);
+    assert.deepEqual([...PRIORITIES], ["low", "medium", "high"]);
   });
 });

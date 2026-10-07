@@ -31,7 +31,9 @@ Modes:
 - **Parallel:** `{ tasks: [{ agent: "name", task: "..." }, ...] }`
 - **Chain:** `{ chain: [{ agent: "name", task: "... {previous} ..." }, ...] }`
 
-Agent scope defaults to `"user"` (agents defined in `~/.pi/agents/`). Set `agentScope: "both"` or `"project"` to include project-local agents from `.pi/agents/`.
+Agent scope defaults to `"both"`: user agents from `~/.pi/agent/agents/` plus the nearest project's `.pi/agents/`, where a project agent overrides a user agent with the same name. Set `agentScope: "user"` or `"project"` to restrict the search.
+
+Each subagent runs as a separate `pi` process with the agent definition's full body as its system prompt, the parent session's model and thinking level (unless the agent pins its own `model`), and only the tools listed in its `tools` field. When `PI_SUBAGENT_PROMPT_MODE=lean` is set, children get only a one-line role prefix and resolve their model from `settings.json` — an opt-in for local models whose tool calling degrades with longer prompts.
 
 Do not fabricate `Task` or `SendMessage` calls. If the `subagent` tool is somehow unavailable (extension not loaded), do the work in the current session.
 
