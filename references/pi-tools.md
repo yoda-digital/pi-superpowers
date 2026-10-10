@@ -25,7 +25,7 @@ The `subagent` tool runs each dispatch as a separate `pi` process with a fresh c
 
 Other agents: `scout`, `planner`, `implementer`, `reviewer`, `debugger`, `researcher` (web). Users can add or override agents in `~/.pi/agent/agents/` or the project's `.pi/agents/`.
 
-A `subagent` call blocks until its children finish and returns their reports, so there is nothing to poll, wait on or chase. A timeout (default 60 minutes) ends a hung child and reports it as failed. Running the controller itself one level down, as a nested subagent, is not available on Pi.
+A `subagent` call blocks until its children finish and returns their reports, so there is nothing to poll, wait on or chase. A timeout (default 60 minutes) ends a hung child and reports it as failed. Running the controller itself one level down, as a nested subagent, is not available on Pi. After context compaction, a message lists the recent subagents and their ids, and another lists the open todos.
 
 Do not fabricate `Task`, `SendMessage` or `spawn_agent` calls. If `subagent` is missing from your tool list, do the work in this session.
 

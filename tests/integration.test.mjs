@@ -168,6 +168,17 @@ describe("README", () => {
     for (const t of registeredTools) assert.ok(readme.includes(`\`${t}\``), t);
   });
 
+  it("documents /superpowers, the evals and the compaction recaps", () => {
+    assert.ok(readme.includes("/superpowers"));
+    assert.ok(readme.includes("scripts/eval-skills.mjs"));
+    assert.equal(pkg.scripts.eval, "node scripts/eval-skills.mjs");
+    assert.match(readme, /compaction/);
+  });
+
+  it("no tool lets the model approve its own project-agent run", () => {
+    assert.doesNotMatch(read("extensions", "subagent", "index.ts"), /confirmProjectAgents/);
+  });
+
   it(`states the default agent scope ("${DEFAULT_AGENT_SCOPE}")`, () => {
     assert.ok(readme.includes(`"${DEFAULT_AGENT_SCOPE}"`));
   });

@@ -1,6 +1,6 @@
 {
   "name": "pi-superpowers",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Superpowers methodology + companion tools for Pi coding agent",
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,8 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "sync-upstream": "bash scripts/sync-upstream.sh"
+    "sync-upstream": "bash scripts/sync-upstream.sh",
+    "eval": "node scripts/eval-skills.mjs"
   },
   "pi": {
     "extensions": [
@@ -27,7 +28,9 @@
       "extensions/ask.ts",
       "extensions/web.ts"
     ],
-    "skills": ["skills/"]
+    "skills": [
+      "skills/"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

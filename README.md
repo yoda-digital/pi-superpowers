@@ -31,7 +31,7 @@ Upstream Superpowers ships a small Pi extension that injects the bootstrap and r
 
 | Extension | File | Purpose |
 |---|---|---|
-| **Superpowers bootstrap** | `extensions/superpowers.ts` | Puts the `using-superpowers` skill plus the Pi tool mapping into the system prompt as a `<superpowers>` section, on every run. Skills are registered by the package manifest. |
+| **Superpowers bootstrap** | `extensions/superpowers.ts` | Puts the `using-superpowers` skill plus the Pi tool mapping into the system prompt as a `<superpowers>` section, on every run. Skills are registered by the package manifest. `/superpowers` shows the integration status. |
 | **Subagent tool** | `extensions/subagent/index.ts` | Registers the `subagent` tool and the `/subagent-models` command. Modes: single, resume, parallel, chain. Each child is an isolated `pi` process with its own persisted session. See [Subagents](#subagents). |
 | **Todo tool** | `extensions/todo.ts` | Registers the `todo` tool and the `/todos` view. State is rebuilt from tool-result history, so it follows session branching. Actions: `add`, `toggle`, `remove`, `rename`, `in_progress`, `list`, `clear`. Progress shows in pi-statusbar when installed, otherwise in Pi's footer. |
 | **Ask user** | `extensions/ask.ts` | Registers `ask_user`: one multiple-choice question as an arrow-key picker, with a "type my own" option. For the moments a skill offers a short menu. |
@@ -129,7 +129,7 @@ A working installation triggers the **brainstorming** skill before any code is w
 
 Also check:
 
-1. `todo`, `subagent` and `ask_user` are in the tool list.
+1. `/superpowers` reports no ✗ lines: bootstrap, skills, active tools, subagent tiers and the web key.
 2. `subagent` with `agent: "scout"` and a task returns a report ending in `[continue this subagent with its context: subagent { "resume": "scout-…" …}]`. A follow-up with that `resume` id remembers the first exchange.
 3. After `/web-key`, a current-events question ("what changed in the latest Node.js release?") makes the agent call `web_search`.
 
@@ -174,7 +174,16 @@ pi-superpowers/
    - Read-only, parallel-safe Tavily calls.
    - Long results are truncated to Pi's limits and the full text is saved to a temp file.
 
-6. **Tool mapping.** `references/pi-tools.md` translates Superpowers' action vocabulary into Pi tools. For example, a `Subagent (general-purpose)` dispatch becomes `subagent` with `agent: "general-purpose"`, and "most capable model" becomes `model: "top"`.
+6. **State across compaction.** Compaction summarizes old tool results away, and with them the todo list and the ids of subagents the model may need to resume. After each compaction the todo and subagent extensions append a short recap: the open todos and the recent subagents with their ids. They are appended after the compaction point, so the compacted prefix stays cacheable.
+
+7. **Tool contracts.**
+   - Every tool declares MCP-style `annotations` (read-only, destructive, open-world). Permission extensions can use them to decide which calls to confirm.
+   - `subagent` and `todo` declare an `outputSchema` and return `structuredContent`, so codemode scripts get typed results (`ok`, `id`, `output`, `error` per child; the todo list) instead of text.
+   - `todo` runs sequentially, because its calls share one list.
+   - Only the user can approve project-local agents: the model has no parameter to skip that confirmation.
+   - Web tool results are labelled as third-party content, so instructions inside a page are read as data.
+
+8. **Tool mapping.** `references/pi-tools.md` translates Superpowers' action vocabulary into Pi tools. For example, a `Subagent (general-purpose)` dispatch becomes `subagent` with `agent: "general-purpose"`, and "most capable model" becomes `model: "top"`.
 
 ## Subagents
 
@@ -289,6 +298,26 @@ bash scripts/sync-upstream.sh v7.1.0   # move to another upstream tag or commit
 
 The script replaces `skills/` with upstream's tree at that ref, copies `references/*.md` over `skills/using-superpowers/references/`, and records the ref and commit in `UPSTREAM.json`. Never edit `skills/` by hand. Pi-specific guidance belongs in `references/`, so a sync never needs a merge. After a sync, check the release notes for new capabilities the skills ask of the harness and map them in `references/pi-tools.md`.
 
+## Skill-activation evals
+
+```bash
+npm run eval                                  # all cases, the session's default model
+node scripts/eval-skills.mjs --case react-todo --runs 3 --model ollama/qwen3:32b
+```
+
+Each case runs real `pi` sessions in a throwaway project, with this package loaded as installed, and checks two things:
+- **Bootstrap probe:** a probe extension records whether every request to the model carried the bootstrap. This check does not depend on the model.
+- **Behavior:** the skill's `SKILL.md` must be read before the first file change.
+
+| Case | Checks |
+|---|---|
+| `react-todo` | Upstream's acceptance test: brainstorming before any code |
+| `second-prompt` | A second prompt in the same running session still gets the bootstrap and the skill |
+| `failing-test` | A failing `npm test` triggers systematic-debugging before any edit |
+| `near-miss` | A plain question is answered without changing files |
+
+The probe is what catches a lost bootstrap. Upstream's description of brainstorming in Pi's skill list is enough for a capable model to load it, so behavior alone can pass without one. Behavior is model-dependent; `--runs N` reports a pass rate. Grading is unit-tested in `tests/eval-grading.test.mjs`.
+
 ## Running tests
 
 ```bash
@@ -301,7 +330,8 @@ This needs Node.js 22.18 or newer: the tests import the real TypeScript modules 
 - child argv and output parsing;
 - the child process runner, against `tests/fixtures/fake-pi.mjs`: stdin delivery, JSONL framing, timeouts, SIGKILL escalation, spawn errors and abort;
 - the child session store;
-- the todo state machine;
+- the todo state machine, and the todo and subagent recaps after compaction;
+- the `/superpowers` status report and the eval grading;
 - the web tools, against a fake Tavily API;
 - that this README, `references/` and the vendored skills agree with the code.
 
@@ -311,6 +341,7 @@ The Pi-bound wiring (`extensions/*.ts`, `extensions/subagent/*.ts`) is checked w
 
 ### Skills do not trigger
 
+- Run `/superpowers`: it checks the bootstrap, skills, active tools, subagent tiers and web key, and says how to fix each.
 - The package must be listed under `packages` in `~/.pi/agent/settings.json` (or the project's `.pi/settings.json`). Symlinked extension files do not work (see Option B).
 - The session file shows whether the bootstrap is present: the first `system` message has a `superpowers` key in `sections`.
 - `/skill:` lists the discovered skills.
