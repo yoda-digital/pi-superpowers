@@ -61,7 +61,7 @@ info "Verifying installation..."
 ERRORS=0
 
 # Check that the extensions resolve (pi install would have failed, but double-check)
-for ext in extensions/superpowers.ts extensions/subagent/index.ts extensions/todo.ts extensions/web.ts; do
+for ext in extensions/superpowers.ts extensions/subagent/index.ts extensions/todo.ts extensions/ask.ts extensions/web.ts; do
     if [ -f "$SCRIPT_DIR/$ext" ]; then
         ok "Extension found: $ext"
     else
@@ -96,7 +96,8 @@ fi
 if [ -f "$SCRIPT_DIR/references/pi-tools.md" ]; then
     ok "Tool mapping reference found"
 else
-    warn "Tool mapping reference missing (will use inline fallback)"
+    warn "Tool mapping reference missing: the bootstrap will not map Superpowers actions to Pi tools"
+    ERRORS=$((ERRORS + 1))
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
@@ -110,11 +111,12 @@ else
 fi
 
 printf '\n  Installed components:\n'
-printf '    Extensions:  superpowers.ts, subagent/index.ts, todo.ts, web.ts\n'
+printf '    Extensions:  superpowers.ts, subagent/index.ts, todo.ts, ask.ts, web.ts\n'
 printf '    Agents:      %s, loaded from the package (override in %s)\n' "$AGENT_COUNT" "$USER_AGENTS"
-printf '    Skills:      %s superpowers skills (upstream)\n' "$SKILL_COUNT"
-printf '    References:  pi-tools.md (tool mapping)\n'
+printf '    Skills:      %s superpowers skills (upstream %s)\n' "$SKILL_COUNT" "$(sed -n 's/.*"ref": *"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/UPSTREAM.json" 2>/dev/null)"
+printf '    References:  pi-tools.md (tool mapping), pi-sessions.md (transcripts)\n'
 printf '\n  Web tools need a Tavily key: run /web-key in Pi.\n'
+printf '  Map subagent model tiers (cheap, mid, top): run /subagent-models in Pi.\n'
 printf '\n  To verify, start Pi and send:\n'
 printf '    Let'\''s make a react todo list\n'
 printf '\n  The brainstorming skill should auto-trigger before any code is written.\n\n'

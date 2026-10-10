@@ -1,26 +1,46 @@
 {
   "name": "pi-superpowers",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Superpowers methodology + companion tools for Pi coding agent",
   "license": "MIT",
   "type": "module",
+  "keywords": [
+    "pi-package",
+    "superpowers",
+    "skills",
+    "subagents",
+    "tdd",
+    "debugging"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "sync-upstream": "bash scripts/sync-upstream.sh"
   },
   "pi": {
     "extensions": [
       "extensions/superpowers.ts",
       "extensions/subagent/index.ts",
       "extensions/todo.ts",
+      "extensions/ask.ts",
       "extensions/web.ts"
     ],
     "skills": ["skills/"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "files": [
     "extensions/",
     "agents/",
     "references/",
     "skills/",
+    "UPSTREAM.json",
     "README.md"
   ]
 }

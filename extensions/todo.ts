@@ -178,18 +178,38 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	// When pi-statusbar announces it's ready, register our segments.
-	pi.events.on("pi-statusbar:ready", () => registerStatusbarSegments());
+	let statusbarPresent = false;
+	pi.events.on("pi-statusbar:ready", () => {
+		statusbarPresent = true;
+		registerStatusbarSegments();
+	});
 
-	const notifyStatusbar = () => pi.events.emit("pi-statusbar:update", { pluginId: "pi-superpowers" });
+	/**
+	 * Show progress: through pi-statusbar when it is installed, otherwise in
+	 * Pi's own footer status line.
+	 */
+	const showProgress = (ctx: ExtensionContext) => {
+		pi.events.emit("pi-statusbar:update", { pluginId: "pi-superpowers" });
+		if (statusbarPresent || !ctx.hasUI) return;
+		if (state.todos.length === 0) {
+			ctx.ui.setStatus("superpowers-todo", undefined);
+			return;
+		}
+		const { done, inProgress, total } = summarizeTodos(state.todos);
+		const current = state.todos.find((t) => t.inProgress && !t.done);
+		const label = `todo ${done}/${total}${inProgress > 0 ? ` ◐${inProgress}` : ""}${current ? ` · ${current.text}` : ""}`;
+		ctx.ui.setStatus("superpowers-todo", ctx.ui.theme.fg("muted", label));
+	};
 
 	pi.on("session_start", async (_event, ctx) => {
 		reconstructState(ctx);
 		// Re-register in case statusbar was already ready before us.
 		registerStatusbarSegments();
+		showProgress(ctx);
 	});
 	pi.on("session_tree", async (_event, ctx) => {
 		reconstructState(ctx);
-		notifyStatusbar();
+		showProgress(ctx);
 	});
 
 	// -------------------------------------------------------------------
@@ -202,13 +222,16 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Manage a todo list. Actions: list, add (text, priority?), toggle (id), " +
 			"remove (id), rename (id, text), in_progress (id), clear",
+		promptSnippet: "todo: track the steps of multi-step work (add, in_progress, toggle when done, list)",
+		promptGuidelines: [
+			"When a skill says to create a todo per checklist item (TodoWrite), add each item with todo, mark it in_progress when you start it, and toggle it when it is done.",
+		],
 		parameters: TodoParams,
 
-		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const result = applyTodoAction(state, params);
 			state = result.state;
-			// Notify statusbar after any state-changing action.
-			if (params.action !== "list") notifyStatusbar();
+			if (params.action !== "list") showProgress(ctx);
 			return {
 				content: [{ type: "text", text: result.text }],
 				details: result.details,
