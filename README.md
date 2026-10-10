@@ -4,7 +4,7 @@
 
 Superpowers is a set of skills that makes a coding agent work like a careful engineer: brainstorm before building, write a plan, test first, debug from the root cause, get reviewed, verify before claiming it's done. Upstream ships a small Pi extension that loads the skills. That's enough to read them, but not enough to run the workflows at full strength. The skills expect subagents they can resume, a model choice per dispatch, a todo list, and a bootstrap that stays put for the whole session. This package provides all of that natively in Pi, and it's tuned to work on local models as well as hosted ones.
 
-Version 2.1.0 vendors Superpowers v7.0.0 (pinned in `UPSTREAM.json`).
+Version 2.2.0 vendors Superpowers v7.0.0 (pinned in `UPSTREAM.json`).
 
 ## Quick start
 
@@ -30,7 +30,7 @@ Update with `pi update --extensions`.
 | `extensions/superpowers.ts` | The bootstrap: the `using-superpowers` skill and the Pi tool mapping, as a `<superpowers>` section of the system prompt on every run. Also the `/superpowers` status command. |
 | `extensions/subagent/index.ts` | The `subagent` tool (single, resume, parallel, chain) and `/subagent-models`. See [Subagents](#subagents). |
 | `extensions/todo.ts` | The `todo` tool (`add`, `toggle`, `in_progress`, `rename`, `remove`, `list`, `clear`) and the `/todos` view. Progress shows in pi-statusbar if you have it, otherwise in Pi's footer. |
-| `extensions/ask.ts` | `ask_user`, which shows one multiple-choice question as a picker, with a way to type your own answer. Skills use it when they offer a short menu. Without an interactive UI it tells the model to ask in its reply instead. |
+| `extensions/ask.ts` | `ask_user`, a question card for the moments a skill offers a short menu. See [Asking questions](#asking-questions). |
 | `extensions/web.ts` | `web_search`, `web_fetch`, `web_verify` and `web_watch` (Tavily), and `/web-key`. See [Web tools](#web-tools-tavily). |
 
 ### Agents
@@ -104,6 +104,29 @@ The tools follow a few rules:
 - `todo` calls run one at a time, since they share a list.
 - Only you can approve a project-local agent. The model has no parameter that skips that confirmation.
 - Web results arrive labelled as third-party content, so instructions hidden in a page are read as data.
+
+## Asking questions
+
+Skills ask open questions in plain chat, and you answer by typing as usual. When a skill offers a short menu instead (brainstorming when you're stuck, or finishing-a-development-branch's merge / PR / keep / discard), the model calls `ask_user` and Pi shows a card where the editor normally is:
+
+```
+╭─ ? Question ────────────────────────────────────────────────────────────╮
+│ How do you want to finish this branch?                                  │
+│ Tests pass; the branch is 3 commits ahead of main.                      │
+│                                                                         │
+│ ▌1  Merge into main                                       ★ recommended │
+│     Fast-forward main, then delete the branch.                          │
+│  2  Open a pull request                                                 │
+│  3  Keep the branch                                                     │
+│  ✎  Something else…                                                     │
+│                                                                         │
+│ ↑↓ move · 1-3 pick · ⏎ choose · tab note · esc skip                     │
+╰─────────────────────────────────────────────────────────────────────────╯
+```
+
+A number key answers straight away. The arrows (or `j`/`k`) and Enter work too, and the cursor starts on the option the model recommends, so Enter alone accepts it. "Something else…" opens a text field inside the card for your own answer. `tab` attaches a note to whatever you're picking, so "SQLite" can come back as "SQLite, but enable WAL mode". With `multiple`, the options get checkboxes: digits or space toggle them and Enter submits. In Pi's fullscreen mode you can also click an option or scroll with the wheel. Esc skips the question, and the model is told to ask in the chat if it still needs the answer.
+
+Once you answer, the card collapses into one line in the conversation (`✓ SQLite`, plus the note if you wrote one), and the model gets your answer as text and as typed data. The card adapts to the terminal width and drops its border below 32 columns. While it waits, Pi reports to terminals that support OSC 7501 that it's blocked on a dialog. RPC clients get Pi's native picker instead, and without any interactive user the tool tells the model to ask in its reply.
 
 ## Subagents
 
@@ -243,6 +266,7 @@ The tests import the real modules in `extensions/lib/` through Node's built-in T
 - agent discovery and model tiers
 - the child session store
 - the todo state machine and the compaction recaps
+- the `ask_user` card: every key path, layout at widths from 12 to 100 columns, mouse rows, the result text
 - the `/superpowers` report and the web tools against a fake Tavily
 - that this README, `references/` and the vendored skills agree with the code
 
