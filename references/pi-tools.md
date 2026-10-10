@@ -39,7 +39,7 @@ Do not fabricate `Task`, `SendMessage` or `spawn_agent` calls. If `subagent` is 
 
 ## Asking the user
 
-Ask questions in your reply, one at a time. When a skill offers a short menu of options, `ask_user` (`question`, 2-6 `options`) shows them as a picker; the user can still type their own answer.
+Ask questions in your reply, one at a time. When a skill offers a short menu of options, use `ask_user`: `question`, an optional one-line `context`, 2-9 `options` (a label, or `{label, description}`), the number of the option you `recommended`, and `multiple: true` when several can apply. The user picks, types their own answer, or adds a note; the result says which.
 
 ## Git worktrees
 
