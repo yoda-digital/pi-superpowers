@@ -7,85 +7,53 @@
 
 import { readFileSync } from "node:fs";
 
+/** Name of the system prompt section that carries the bootstrap. Pi wraps it in `<superpowers>` tags. */
+export const BOOTSTRAP_SECTION = "superpowers";
+
 /**
- * The tag the bootstrap wraps its content in. Also used as the dedup signal:
- * if any message in the conversation already contains this tag, the bootstrap
- * has already been injected and should not be duplicated.
+ * Set by the subagent tool on every child process. A child is a worker with
+ * one task: it must not receive the controller's bootstrap, even if it loads
+ * this package (upstream's `<SUBAGENT-STOP>` note relies on model compliance,
+ * which is not reliable).
  */
-export const EXTREMELY_IMPORTANT_TAG = "<EXTREMELY_IMPORTANT>";
+export const CHILD_ENV = "PI_SUPERPOWERS_CHILD";
 
-/** Used only when references/pi-tools.md cannot be read. Keep it consistent with that file. */
-export const INLINE_TOOL_MAPPING = `## Pi tool mapping
-
-Pi has native skills but does not expose Claude Code's \`Skill\` tool. When a Superpowers instruction says to invoke a skill, load the relevant \`SKILL.md\` with \`read\`, or let a human invoke \`/skill:name\`.
-
-Pi's built-in coding tools are lowercase. \`read\`, \`write\`, \`edit\` and \`bash\` are enabled by default; \`grep\`, \`find\` and \`ls\` are available only when enabled (\`defaultTools\` setting or \`--tools\`) — when they are not in your tool list, search, find and list files through \`bash\`.
-
-Pi has no dedicated worktree tools. When a Superpowers instruction calls for an isolated worktree, run \`git worktree add\` / \`git worktree remove\` through \`bash\`.
-
-For web access use this package's tools: \`web_search\` (Superpowers' \`WebSearch\`), \`web_fetch\` (\`WebFetch\`), \`web_verify\` to fact-check a claim, and \`web_watch\` to track new sources on a topic. If they report a missing Tavily key, ask the user to run \`/web-key\` rather than fabricating results.
-
-Use this package's \`subagent\` tool for Superpowers subagent workflows. If it is not available, do the work in this session instead of inventing \`Task\` calls.
-
-Use this package's \`todo\` tool for task tracking. If it is not available, track work in plan files or a repo-local \`TODO.md\`. Treat older \`TodoWrite\` references as this task-tracking action.`;
+export function isSubagentChild(env: Record<string, string | undefined>): boolean {
+	return env[CHILD_ENV] === "1";
+}
 
 export function stripFrontmatter(content: string): string {
-	const match = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+	const match = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
 	return (match ? match[1] : content).trim();
 }
 
-function loadToolMapping(toolMappingPath: string): string {
+function readOptional(path: string): string | null {
 	try {
-		return readFileSync(toolMappingPath, "utf8").trim();
+		return readFileSync(path, "utf8").trim();
 	} catch {
-		return INLINE_TOOL_MAPPING;
+		return null;
 	}
 }
 
 /**
  * Assemble the bootstrap text. Re-reads from disk on every call (no cache) so
- * that SKILL.md edits during a session take effect immediately.
+ * that SKILL.md edits take effect on the next prompt. Unchanged text produces
+ * an identical section, which Pi does not re-record, so the prompt cache holds.
  * Returns null when the bootstrap skill itself cannot be read.
  */
 export function buildBootstrapContent(skillPath: string, toolMappingPath: string): string | null {
-	let skillBody: string;
-	try {
-		skillBody = stripFrontmatter(readFileSync(skillPath, "utf8"));
-	} catch {
-		return null;
-	}
+	const skill = readOptional(skillPath);
+	if (skill === null) return null;
+	const toolMapping = readOptional(toolMappingPath);
 
-	return `${EXTREMELY_IMPORTANT_TAG}
-
-You have superpowers.
-
-The using-superpowers skill content is included below and is already loaded for this Pi session. Follow it now. Do not try to load using-superpowers again.
-
-${skillBody}
-
-${loadToolMapping(toolMappingPath)}
-</EXTREMELY_IMPORTANT>`;
-}
-
-/** Dedup check: does this message already carry the bootstrap tag? */
-export function messageContainsBootstrap(message: unknown): boolean {
-	const content = (message as { content?: unknown } | undefined)?.content;
-	if (typeof content === "string") return content.includes(EXTREMELY_IMPORTANT_TAG);
-	if (!Array.isArray(content)) return false;
-	return content.some((part: unknown) => {
-		if (!part || typeof part !== "object") return false;
-		const typed = part as { type?: unknown; text?: unknown };
-		return typed.type === "text" && typeof typed.text === "string" && typed.text.includes(EXTREMELY_IMPORTANT_TAG);
-	});
-}
-
-export function firstNonCompactionSummaryIndex(messages: unknown[]): number {
-	let index = 0;
-	while (
-		index < messages.length &&
-		(messages[index] as { role?: unknown } | undefined)?.role === "compactionSummary"
-	) {
-		index += 1;
-	}
-	return index;
+	return [
+		"<EXTREMELY_IMPORTANT>",
+		"You have superpowers.",
+		"",
+		"The using-superpowers skill content is included below and is already loaded for this Pi session. Follow it now. Do not try to load using-superpowers again.",
+		"",
+		stripFrontmatter(skill),
+		...(toolMapping ? ["", toolMapping] : []),
+		"</EXTREMELY_IMPORTANT>",
+	].join("\n");
 }

@@ -14,11 +14,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  EXTREMELY_IMPORTANT_TAG,
-  INLINE_TOOL_MAPPING,
+  BOOTSTRAP_SECTION,
+  CHILD_ENV,
   buildBootstrapContent,
-  firstNonCompactionSummaryIndex,
-  messageContainsBootstrap,
+  isSubagentChild,
   stripFrontmatter,
 } from "../extensions/lib/bootstrap.ts";
 import superpowersExtension from "../extensions/superpowers.ts";
@@ -28,7 +27,8 @@ const skillPath = join(projectRoot, "skills", "using-superpowers", "SKILL.md");
 const piToolsPath = join(projectRoot, "references", "pi-tools.md");
 
 // ---------------------------------------------------------------------------
-// Fake Pi host: records handlers so the real extension can be driven.
+// Fake Pi host. Like Pi's runner, every run gets fresh prompt options whose
+// `sections` object handlers mutate in place.
 // ---------------------------------------------------------------------------
 
 function loadExtension() {
@@ -39,21 +39,23 @@ function loadExtension() {
       handlers.get(event).push(handler);
     },
   });
-  const fire = async (event, payload = {}) => {
-    let last;
-    for (const h of handlers.get(event) ?? []) last = await h(payload, {});
-    return last;
+  const startRun = async (prompt = "hi") => {
+    const event = { type: "before_agent_start", prompt, systemPrompt: "", systemPromptOptions: { sections: {} } };
+    for (const h of handlers.get("before_agent_start") ?? []) await h(event, {});
+    return event.systemPromptOptions.sections;
   };
-  return { handlers, fire };
+  return { handlers, startRun };
 }
-
-const userMsg = (text) => ({ role: "user", content: [{ type: "text", text }], timestamp: 1 });
 
 // ---------------------------------------------------------------------------
 
 describe("stripFrontmatter", () => {
   it("removes YAML frontmatter delimited by ---", () => {
     assert.equal(stripFrontmatter("---\nname: x\n---\nBody"), "Body");
+  });
+
+  it("handles CRLF line endings", () => {
+    assert.equal(stripFrontmatter("---\r\nname: x\r\n---\r\nBody"), "Body");
   });
 
   it("returns content unchanged (trimmed) when there is no frontmatter", () => {
@@ -65,123 +67,93 @@ describe("stripFrontmatter", () => {
   });
 });
 
-describe("messageContainsBootstrap", () => {
-  it("detects the tag in string content", () => {
-    assert.equal(messageContainsBootstrap({ content: `x ${EXTREMELY_IMPORTANT_TAG} y` }), true);
-  });
-
-  it("detects the tag in a text part", () => {
-    assert.equal(messageContainsBootstrap(userMsg(EXTREMELY_IMPORTANT_TAG)), true);
-  });
-
-  it("ignores non-text parts and malformed messages", () => {
-    assert.equal(messageContainsBootstrap({ content: [{ type: "image", text: EXTREMELY_IMPORTANT_TAG }] }), false);
-    assert.equal(messageContainsBootstrap(undefined), false);
-    assert.equal(messageContainsBootstrap({ content: 42 }), false);
-    assert.equal(messageContainsBootstrap(userMsg("hello")), false);
-  });
-});
-
-describe("firstNonCompactionSummaryIndex", () => {
-  it("skips leading compaction summaries only", () => {
-    const msgs = [{ role: "compactionSummary" }, { role: "compactionSummary" }, { role: "user" }, { role: "compactionSummary" }];
-    assert.equal(firstNonCompactionSummaryIndex(msgs), 2);
-    assert.equal(firstNonCompactionSummaryIndex([]), 0);
-    assert.equal(firstNonCompactionSummaryIndex([{ role: "user" }]), 0);
-  });
-});
-
 describe("buildBootstrapContent", () => {
-  it("assembles the shipped SKILL.md body and the shipped tool mapping", () => {
-    const out = buildBootstrapContent(skillPath, piToolsPath);
-    const skillBody = stripFrontmatter(readFileSync(skillPath, "utf8"));
-    assert.ok(out.startsWith(EXTREMELY_IMPORTANT_TAG));
-    assert.ok(out.trimEnd().endsWith("</EXTREMELY_IMPORTANT>"));
-    assert.ok(out.includes(skillBody), "must embed the skill body");
-    assert.ok(out.includes("# Pi Tool Mapping"), "must embed references/pi-tools.md");
-    assert.ok(!out.includes("name: using-superpowers"), "frontmatter must be stripped");
+  it("contains the using-superpowers body (no frontmatter) and the Pi tool mapping", () => {
+    const content = buildBootstrapContent(skillPath, piToolsPath);
+    assert.ok(content.startsWith("<EXTREMELY_IMPORTANT>\nYou have superpowers."));
+    assert.ok(content.endsWith("</EXTREMELY_IMPORTANT>"));
+    assert.ok(content.includes(stripFrontmatter(readFileSync(skillPath, "utf8"))));
+    assert.ok(content.includes(readFileSync(piToolsPath, "utf8").trim()));
+    assert.ok(!content.includes("name: using-superpowers"));
   });
 
-  it("falls back to the inline mapping when the reference file is missing", () => {
-    const out = buildBootstrapContent(skillPath, join(projectRoot, "does-not-exist.md"));
-    assert.ok(out.includes(INLINE_TOOL_MAPPING));
+  it("returns null when the skill cannot be read", () => {
+    assert.equal(buildBootstrapContent("/nonexistent/SKILL.md", piToolsPath), null);
   });
 
-  it("returns null when the skill file is missing", () => {
-    assert.equal(buildBootstrapContent(join(projectRoot, "nope", "SKILL.md"), piToolsPath), null);
+  it("still bootstraps without the tool mapping", () => {
+    const content = buildBootstrapContent(skillPath, "/nonexistent/pi-tools.md");
+    assert.ok(content.includes("You have superpowers."));
+    assert.ok(!content.includes("# Pi Tool Mapping"));
   });
 
-  it("re-reads the skill from disk on every call", () => {
+  it("re-reads from disk on every call", () => {
     const dir = mkdtempSync(join(tmpdir(), "sp-boot-"));
     try {
       const p = join(dir, "SKILL.md");
-      writeFileSync(p, "---\nname: t\n---\nversion one");
-      assert.ok(buildBootstrapContent(p, piToolsPath).includes("version one"));
-      writeFileSync(p, "---\nname: t\n---\nversion two");
-      assert.ok(buildBootstrapContent(p, piToolsPath).includes("version two"));
+      writeFileSync(p, "---\nname: x\n---\nfirst");
+      assert.ok(buildBootstrapContent(p, piToolsPath).includes("first"));
+      writeFileSync(p, "---\nname: x\n---\nsecond");
+      assert.ok(buildBootstrapContent(p, piToolsPath).includes("second"));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-});
 
-describe("inline fallback mapping", () => {
-  it("does not claim grep/find/ls are enabled by default", () => {
-    assert.match(INLINE_TOOL_MAPPING, /`grep`, `find` and `ls`[^.]*only when enabled/);
-  });
-
-  it("does not claim Pi ships worktree tools", () => {
-    assert.ok(!/Pi ships `?EnterWorktree/.test(INLINE_TOOL_MAPPING));
-    assert.match(INLINE_TOOL_MAPPING, /git worktree/);
-  });
-
-  it("points at this package's own subagent, todo and web tools", () => {
-    assert.match(INLINE_TOOL_MAPPING, /`subagent`/);
-    assert.match(INLINE_TOOL_MAPPING, /`todo`/);
-    assert.match(INLINE_TOOL_MAPPING, /`web_search`/);
-    assert.match(INLINE_TOOL_MAPPING, /`web_fetch`/);
+  it("is deterministic, so an unchanged section keeps the prompt cache", () => {
+    assert.equal(buildBootstrapContent(skillPath, piToolsPath), buildBootstrapContent(skillPath, piToolsPath));
   });
 });
 
-// ---------------------------------------------------------------------------
-// The real extension, driven through a fake Pi host
-// ---------------------------------------------------------------------------
+describe("isSubagentChild", () => {
+  it(`is true only when ${CHILD_ENV}=1`, () => {
+    assert.equal(isSubagentChild({ [CHILD_ENV]: "1" }), true);
+    assert.equal(isSubagentChild({ [CHILD_ENV]: "0" }), false);
+    assert.equal(isSubagentChild({}), false);
+  });
+});
 
 describe("superpowers extension", () => {
-  it("registers the package skills directory", async () => {
-    const { fire } = loadExtension();
-    const res = await fire("resources_discover");
-    assert.deepEqual(res, { skillPaths: [join(projectRoot, "skills")] });
+  it("only hooks before_agent_start (no request-local context injection, no resources_discover)", () => {
+    const { handlers } = loadExtension();
+    assert.deepEqual([...handlers.keys()], ["before_agent_start"]);
   });
 
-  it("injects the bootstrap once, before the first user message", async () => {
-    const { fire } = loadExtension();
-    await fire("session_start");
-    const res = await fire("context", { messages: [userMsg("Let's make a react todo list")] });
-    assert.ok(res, "context handler must return modified messages");
-    assert.equal(res.messages.length, 2);
-    assert.ok(messageContainsBootstrap(res.messages[0]));
-    assert.equal(res.messages[1].content[0].text, "Let's make a react todo list");
+  it(`puts the bootstrap in the "${BOOTSTRAP_SECTION}" system prompt section`, async () => {
+    const { startRun } = loadExtension();
+    const sections = await startRun();
+    assert.equal(sections[BOOTSTRAP_SECTION], buildBootstrapContent(skillPath, piToolsPath));
   });
 
-  it("does not inject twice when the tag is already present", async () => {
-    const { fire } = loadExtension();
-    await fire("session_start");
-    const res = await fire("context", { messages: [userMsg(EXTREMELY_IMPORTANT_TAG), userMsg("hi")] });
-    assert.equal(res, undefined);
+  it("sets it on every run, not just the first (regression: the bootstrap used to vanish after one exchange)", async () => {
+    const { startRun } = loadExtension();
+    for (let i = 0; i < 3; i++) {
+      const sections = await startRun(`prompt ${i}`);
+      assert.ok(sections[BOOTSTRAP_SECTION]?.includes("You have superpowers."), `run ${i}`);
+    }
   });
 
-  it("stops injecting after the first agent turn and resumes after compaction", async () => {
-    const { fire } = loadExtension();
-    await fire("session_start");
-    await fire("agent_end");
-    assert.equal(await fire("context", { messages: [userMsg("later")] }), undefined);
+  it("leaves other sections alone", async () => {
+    const { handlers } = loadExtension();
+    const event = { systemPromptOptions: { sections: { tool_guidance: "keep me" } } };
+    for (const h of handlers.get("before_agent_start")) await h(event, {});
+    assert.equal(event.systemPromptOptions.sections.tool_guidance, "keep me");
+  });
 
-    await fire("session_compact");
-    const res = await fire("context", {
-      messages: [{ role: "compactionSummary", summary: "s" }, userMsg("after compaction")],
-    });
-    assert.equal(res.messages[0].role, "compactionSummary", "summary stays first");
-    assert.ok(messageContainsBootstrap(res.messages[1]), "bootstrap goes right after the summary");
+  it("registers nothing inside a subagent child", () => {
+    const saved = process.env[CHILD_ENV];
+    process.env[CHILD_ENV] = "1";
+    try {
+      const { handlers } = loadExtension();
+      assert.equal(handlers.size, 0);
+    } finally {
+      if (saved === undefined) delete process.env[CHILD_ENV];
+      else process.env[CHILD_ENV] = saved;
+    }
+  });
+
+  it("the section name is valid for Pi (lowercase, not preamble)", () => {
+    assert.match(BOOTSTRAP_SECTION, /^[a-z][a-z0-9_-]*$/);
+    assert.notEqual(BOOTSTRAP_SECTION, "preamble");
   });
 });
