@@ -33,10 +33,14 @@ const piToolsPath = join(projectRoot, "references", "pi-tools.md");
 
 function loadExtension() {
   const handlers = new Map();
+  const commands = new Map();
   superpowersExtension({
     on(event, handler) {
       if (!handlers.has(event)) handlers.set(event, []);
       handlers.get(event).push(handler);
+    },
+    registerCommand(name, command) {
+      commands.set(name, command);
     },
   });
   const startRun = async (prompt = "hi") => {
@@ -44,7 +48,7 @@ function loadExtension() {
     for (const h of handlers.get("before_agent_start") ?? []) await h(event, {});
     return event.systemPromptOptions.sections;
   };
-  return { handlers, startRun };
+  return { handlers, commands, startRun };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +123,12 @@ describe("superpowers extension", () => {
     assert.deepEqual([...handlers.keys()], ["before_agent_start"]);
   });
 
+  it("registers the /superpowers status command", () => {
+    const { commands } = loadExtension();
+    assert.deepEqual([...commands.keys()], ["superpowers"]);
+    assert.match(commands.get("superpowers").description, /status/);
+  });
+
   it(`puts the bootstrap in the "${BOOTSTRAP_SECTION}" system prompt section`, async () => {
     const { startRun } = loadExtension();
     const sections = await startRun();
@@ -144,8 +154,9 @@ describe("superpowers extension", () => {
     const saved = process.env[CHILD_ENV];
     process.env[CHILD_ENV] = "1";
     try {
-      const { handlers } = loadExtension();
+      const { handlers, commands } = loadExtension();
       assert.equal(handlers.size, 0);
+      assert.equal(commands.size, 0);
     } finally {
       if (saved === undefined) delete process.env[CHILD_ENV];
       else process.env[CHILD_ENV] = saved;
