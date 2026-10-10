@@ -4,7 +4,7 @@
 
 Superpowers is a set of skills that makes a coding agent work like a careful engineer: brainstorm before building, write a plan, test first, debug from the root cause, get reviewed, verify before claiming it's done. Upstream ships a small Pi extension that loads the skills. That's enough to read them, but not enough to run the workflows at full strength. The skills expect subagents they can resume, a model choice per dispatch, a todo list, and a bootstrap that stays put for the whole session. This package provides all of that natively in Pi, and it's tuned to work on local models as well as hosted ones.
 
-Version 2.2.0 vendors Superpowers v7.0.0 (pinned in `UPSTREAM.json`).
+Version 2.3.0 vendors Superpowers v7.0.0 (pinned in `UPSTREAM.json`).
 
 ## Quick start
 
@@ -126,7 +126,9 @@ Skills ask open questions in plain chat, and you answer by typing as usual. When
 
 A number key answers straight away. The arrows (or `j`/`k`) and Enter work too, and the cursor starts on the option the model recommends, so Enter alone accepts it. "Something else…" opens a text field inside the card for your own answer. `tab` attaches a note to whatever you're picking, so "SQLite" can come back as "SQLite, but enable WAL mode". With `multiple`, the options get checkboxes: digits or space toggle them and Enter submits. In Pi's fullscreen mode you can also click an option or scroll with the wheel. Esc skips the question, and the model is told to ask in the chat if it still needs the answer.
 
-Once you answer, the card collapses into one line in the conversation (`✓ SQLite`, plus the note if you wrote one), and the model gets your answer as text and as typed data. The card adapts to the terminal width and drops its border below 32 columns. While it waits, Pi reports to terminals that support OSC 7501 that it's blocked on a dialog. RPC clients get Pi's native picker instead, and without any interactive user the tool tells the model to ask in its reply.
+Answers and notes can be as long as you like. Paste with your terminal's usual shortcut (`Ctrl+V` in Windows Terminal, `Ctrl+Shift+V` in most Linux terminals, right-click in Pi's fullscreen mode); the newlines survive, Windows line endings are cleaned up, and a long paste shows as a compact `[paste #1 +40 lines]` marker that expands when you send it. Pasting while the option list has focus opens "Something else" with your text in it. Pi's own clipboard key (`Ctrl+V`, or `Alt+V` on Windows and WSL) also works, for terminals that don't paste on `Ctrl+V` themselves. To start a new line while typing, use `Ctrl+J` (or `Shift+Enter` where your terminal supports it).
+
+Once you answer, the card collapses into one line in the conversation (`✓ SQLite`, plus the note if you wrote one, and "+N lines" when the answer is longer), and the model gets your full answer as text and as typed data. The card adapts to the terminal width and drops its border below 32 columns. While it waits, Pi reports to terminals that support OSC 7501 that it's blocked on a dialog. RPC clients get Pi's native picker instead, and without any interactive user the tool tells the model to ask in its reply.
 
 ## Subagents
 

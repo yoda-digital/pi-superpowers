@@ -46,6 +46,8 @@ export type AskAction =
 	| { type: "cancel" }
 	| { type: "hover"; row: number }
 	| { type: "click"; row: number }
+	/** Pasted text arrived while the list had focus: answer with it in the "Something else" field. */
+	| { type: "paste" }
 	| { type: "submitText"; text: string };
 
 export type AskOutcome =
@@ -116,6 +118,8 @@ export function reduceAsk(spec: AskSpec, state: AskState, action: AskAction): { 
 			return { state: { ...s, mode: "note" } };
 		case "cancel":
 			return { state: s, outcome: { kind: "dismissed" } };
+		case "paste":
+			return { state: { ...s, cursor: otherRow, mode: "other" } };
 		case "submitText":
 			return { state: s };
 	}
@@ -187,8 +191,8 @@ export interface AskFrame {
 export const MIN_BOXED_WIDTH = 32;
 
 export function keyHints(spec: AskSpec, state: AskState): string {
-	if (state.mode === "other") return "⏎ send · esc back";
-	if (state.mode === "note") return "⏎ send with note · esc back";
+	if (state.mode === "other") return "⏎ send · ctrl+j new line · esc back";
+	if (state.mode === "note") return "⏎ send with note · ctrl+j new line · esc back";
 	const n = spec.options.length;
 	const digits = n === 1 ? "1" : `1-${n}`;
 	return spec.multiple
@@ -288,6 +292,17 @@ export function renderAsk(
 		rowAt.push(undefined);
 	}
 	return { lines, rowAt };
+}
+
+/**
+ * One line for the transcript chip: the first non-empty line, capped, and how
+ * many lines were left out. The model always gets the full text.
+ */
+export function previewText(text: string, maxChars = 80): { line: string; moreLines: number } {
+	const lines = text.split("\n");
+	const first = lines.find((l) => l.trim()) ?? "";
+	const line = first.length > maxChars ? `${first.slice(0, maxChars - 1)}…` : first;
+	return { line, moreLines: Math.max(0, lines.filter((l) => l.trim()).length - 1) };
 }
 
 /** Normalize the tool's arguments: string or {label, description} options, 1-based recommended. */

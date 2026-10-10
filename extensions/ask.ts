@@ -27,7 +27,9 @@ import {
 	type Component,
 	Editor,
 	type Focusable,
+	getNativeClipboard,
 	Key,
+	type KeybindingsManager,
 	matchesKey,
 	Text,
 	type TUI,
@@ -49,6 +51,7 @@ import {
 	MAX_OPTIONS,
 	MIN_BOXED_WIDTH,
 	normalizeAskParams,
+	previewText,
 	reduceAsk,
 	renderAsk,
 	type TextKit,
@@ -100,6 +103,7 @@ class AskCard implements Component, Focusable {
 	constructor(
 		private readonly tui: TUI,
 		private readonly theme: Theme,
+		private readonly keybindings: KeybindingsManager,
 		private readonly spec: AskSpec,
 		private readonly done: (outcome: AskOutcome) => void,
 	) {
@@ -142,11 +146,37 @@ class AskCard implements Component, Focusable {
 		this.tui.requestRender();
 	}
 
+	/**
+	 * Pi's clipboard-paste key (ctrl+v; alt+v on Windows and WSL). Terminals whose own
+	 * paste shortcut is ctrl+shift+v pass ctrl+v through to us, so read the clipboard the
+	 * way Pi's editor does and hand it to the field as a bracketed paste. Without a
+	 * native clipboard helper this does nothing, and the terminal's paste still works.
+	 */
+	private async pasteFromClipboard(): Promise<void> {
+		try {
+			const text = await getNativeClipboard()?.getText();
+			if (!text || this.finished || this.state.mode === "choose") return;
+			this.editor.handleInput(`\x1b[200~${text}\x1b[201~`);
+			this.tui.requestRender();
+		} catch {
+			// Clipboard unavailable or denied: nothing to paste.
+		}
+	}
+
 	handleInput(data: string): void {
+		const isPaste = data.startsWith("\x1b[200~");
+		const isClipboardKey = this.keybindings.matches(data, "app.clipboard.pasteImage");
+		if (this.state.mode === "choose" && (isPaste || isClipboardKey)) {
+			// Pasting while the list has focus answers in the "Something else" field.
+			this.apply({ type: "paste" });
+		}
 		if (this.state.mode !== "choose") {
-			if (matchesKey(data, Key.escape)) this.apply({ type: "cancel" });
+			if (isClipboardKey) void this.pasteFromClipboard();
+			else if (!isPaste && matchesKey(data, Key.escape)) this.apply({ type: "cancel" });
 			else {
-				this.editor.handleInput(data); // Enter submits through editor.onSubmit
+				// Bracketed pastes keep their newlines and big ones collapse to a marker that
+				// expands on submit; Enter submits through editor.onSubmit.
+				this.editor.handleInput(data);
 				this.tui.requestRender();
 			}
 			return;
@@ -241,8 +271,8 @@ export default function (pi: ExtensionAPI) {
 			const onAbort = () => card?.finish({ kind: "dismissed" });
 			signal?.addEventListener("abort", onAbort, { once: true });
 			try {
-				const outcome = await ctx.ui.custom<AskOutcome>((tui, theme, _keybindings, done) => {
-					card = new AskCard(tui, theme, spec, done);
+				const outcome = await ctx.ui.custom<AskOutcome>((tui, theme, keybindings, done) => {
+					card = new AskCard(tui, theme, keybindings, spec, done);
 					return card;
 				});
 				return reply(outcome ?? { kind: "dismissed" });
@@ -264,11 +294,15 @@ export default function (pi: ExtensionAPI) {
 			}
 			const o = d.outcome;
 			if (o.kind === "dismissed") return new Text(theme.fg("muted", "– dismissed"), 0, 0);
+			// One line in the transcript, however long the answer; the model has the full text.
+			const more = (n: number) => (n > 0 ? theme.fg("dim", ` (+${n} line${n === 1 ? "" : "s"})`) : "");
 			if (o.kind === "custom") {
-				return new Text(`${theme.fg("success", "✓ ")}${theme.fg("accent", `"${o.text}"`)}${theme.fg("dim", "  typed")}`, 0, 0);
+				const p = previewText(o.text);
+				return new Text(`${theme.fg("success", "✓ ")}${theme.fg("accent", `"${p.line}"`)}${more(p.moreLines)}${theme.fg("dim", "  typed")}`, 0, 0);
 			}
 			const labels = o.indices.map((i) => d.spec.options[i]?.label ?? "?").join(theme.fg("dim", " · "));
-			const note = o.note ? `\n  ${theme.fg("muted", `note: ${o.note}`)}` : "";
+			const n = o.note ? previewText(o.note) : undefined;
+			const note = n ? `\n  ${theme.fg("muted", `note: ${n.line}`)}${more(n.moreLines)}` : "";
 			return new Text(`${theme.fg("success", "✓ ")}${theme.fg("accent", theme.bold(labels))}${note}`, 0, 0);
 		},
 	});

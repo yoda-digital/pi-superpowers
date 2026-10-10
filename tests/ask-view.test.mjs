@@ -13,6 +13,7 @@ import {
   initialAskState,
   keyHints,
   normalizeAskParams,
+  previewText,
   reduceAsk,
   renderAsk,
 } from "../extensions/lib/ask-view.ts";
@@ -127,6 +128,23 @@ describe("keys", () => {
     assert.equal(back.outcome, undefined);
   });
 
+  it("a paste while the list has focus opens Something else; inside the editor it is the editor's", () => {
+    const s = spec();
+    const r = run(s, [{ type: "down" }, { type: "paste" }]);
+    assert.equal(r.state.mode, "other");
+    assert.equal(r.state.cursor, 3);
+    assert.equal(r.outcome, undefined);
+    const typing = run(s, [{ type: "note" }]).state;
+    assert.deepEqual(run(s, [{ type: "paste" }], typing).state, typing, "no-op while typing a note");
+  });
+
+  it("a multi-line typed answer comes back whole", () => {
+    const s = spec();
+    const r = run(s, [{ type: "paste" }, { type: "submitText", text: "line one\nline two\n\nline four" }]);
+    assert.deepEqual(r.outcome, { kind: "custom", text: "line one\nline two\n\nline four" });
+    assert.equal(askResult(s, r.outcome).text, "The user answered in their own words: line one\nline two\n\nline four");
+  });
+
   it("Esc in the list dismisses", () => {
     assert.deepEqual(run(spec(), [{ type: "cancel" }]).outcome, { kind: "dismissed" });
   });
@@ -211,7 +229,7 @@ describe("renderAsk", () => {
     const iOther = other.findIndex((l) => l.includes("Something else"));
     assert.match(other[iOther + 1], /Your answer/);
     assert.match(other[iOther + 2], /\[editor line\]/);
-    assert.ok(other.some((l) => l.includes("⏎ send · esc back")));
+    assert.ok(other.some((l) => l.includes("⏎ send · ctrl+j new line · esc back")));
 
     const note = frame(s, { cursor: 1, checked: [], mode: "note" }, 60, ["[note]"]).lines.map(strip);
     const iNote = note.findIndex((l) => l.includes("Open a pull request"));
@@ -249,6 +267,19 @@ describe("askResult", () => {
 describe("keyHints", () => {
   it("adapts to the option count and mode", () => {
     assert.match(keyHints(spec({ options: ["a", "b"] }), initialAskState(spec())), /1-2 pick/);
-    assert.equal(keyHints(spec(), { cursor: 0, checked: [], mode: "note" }), "⏎ send with note · esc back");
+    assert.equal(keyHints(spec(), { cursor: 0, checked: [], mode: "note" }), "⏎ send with note · ctrl+j new line · esc back");
+  });
+});
+
+describe("previewText", () => {
+  it("shows the first non-empty line and counts the other non-empty lines", () => {
+    assert.deepEqual(previewText("\n  \nfirst\nsecond\n\nthird"), { line: "first", moreLines: 2 });
+    assert.deepEqual(previewText("only"), { line: "only", moreLines: 0 });
+  });
+
+  it("caps a long line", () => {
+    const p = previewText("x".repeat(200), 80);
+    assert.equal(p.line.length, 80);
+    assert.ok(p.line.endsWith("…"));
   });
 });
