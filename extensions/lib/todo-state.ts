@@ -186,3 +186,18 @@ export function reconstructTodoState(entries: Iterable<unknown>): TodoState {
 	}
 	return state;
 }
+
+/**
+ * What the model must not lose when context is compacted: the open items.
+ * Returns null when nothing is open (no message is worth sending then).
+ */
+export function buildTodoRecap(todos: Todo[]): string | null {
+	const open = todos.filter((t) => !t.done);
+	if (open.length === 0) return null;
+	const { done, total } = summarizeTodos(todos);
+	return [
+		`Todo list after context compaction (${done}/${total} done). Open items:`,
+		formatTodoList(open),
+		"Continue from the item in progress; update items with the todo tool.",
+	].join("\n");
+}

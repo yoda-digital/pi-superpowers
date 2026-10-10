@@ -15,6 +15,7 @@ import { Type } from "typebox";
 import {
 	ACTIONS,
 	applyTodoAction,
+	buildTodoRecap,
 	EMPTY_TODO_STATE,
 	PRIORITIES,
 	type Priority,
@@ -34,6 +35,20 @@ const TodoParams = Type.Object({
 	text: Type.Optional(Type.String({ description: "Todo text (for add / rename)" })),
 	id: Type.Optional(Type.Number({ description: "Todo ID (for toggle / remove / rename / in_progress)" })),
 	priority: Type.Optional(StringEnum(PRIORITIES, { description: "Priority level (for add; defaults to medium)" })),
+});
+
+/** What codemode scripts receive instead of the text: the list after the action. */
+const TodoOutput = Type.Object({
+	todos: Type.Array(
+		Type.Object({
+			id: Type.Number(),
+			text: Type.String(),
+			done: Type.Boolean(),
+			inProgress: Type.Boolean(),
+			priority: StringEnum(PRIORITIES),
+		}),
+	),
+	error: Type.Optional(Type.String()),
 });
 
 // ---------------------------------------------------------------------------
@@ -212,6 +227,16 @@ export default function (pi: ExtensionAPI) {
 		showProgress(ctx);
 	});
 
+	// Compaction summarizes the todo tool results away. The list is the plan the
+	// model is executing, so put the open items back in context. A custom message
+	// is appended (queued to the end of the turn when a run is active): the
+	// compacted prefix stays untouched, so the prompt cache rebuilds once.
+	pi.on("session_compact", async (_event, ctx) => {
+		reconstructState(ctx);
+		const recap = buildTodoRecap(state.todos);
+		if (recap) pi.sendMessage({ customType: "superpowers-todo-recap", content: recap, display: true });
+	});
+
 	// -------------------------------------------------------------------
 	// Tool registration
 	// -------------------------------------------------------------------
@@ -223,10 +248,11 @@ export default function (pi: ExtensionAPI) {
 			"Manage a todo list. Actions: list, add (text, priority?), toggle (id), " +
 			"remove (id), rename (id, text), in_progress (id), clear",
 		promptSnippet: "todo: track the steps of multi-step work (add, in_progress, toggle when done, list)",
-		promptGuidelines: [
-			"When a skill says to create a todo per checklist item (TodoWrite), add each item with todo, mark it in_progress when you start it, and toggle it when it is done.",
-		],
 		parameters: TodoParams,
+		outputSchema: TodoOutput,
+		// Calls share the in-memory list: run them in order.
+		executionMode: "sequential",
+		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const result = applyTodoAction(state, params);
@@ -235,6 +261,10 @@ export default function (pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text", text: result.text }],
 				details: result.details,
+				structuredContent: {
+					todos: result.state.todos.map(({ id, text, done, inProgress, priority }) => ({ id, text, done, inProgress, priority })),
+					...(result.details.error ? { error: result.details.error } : {}),
+				},
 			};
 		},
 

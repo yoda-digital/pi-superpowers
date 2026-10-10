@@ -53,7 +53,9 @@ import {
 	TIERS,
 } from "../lib/subagent-config.ts";
 import {
+	buildSubagentRecap,
 	childSessionDir,
+	collectResumableChildren,
 	findChildSession,
 	findChildSessionFile,
 	isDirectory,
@@ -464,49 +466,54 @@ async function runChild(dc: DispatchContext, req: ChildRequest, onUpdate?: OnRes
 // Tool schema
 // ---------------------------------------------------------------------------
 
-const ModelParam = Type.Optional(
-	Type.String({
-		description: `Model for this dispatch: a tier (${TIERS.join(", ")}) or "provider/id". Default: the agent's model, else the session's.`,
-	}),
-);
-const ThinkingParam = Type.Optional(StringEnum(THINKING_LEVELS, { description: "Thinking level for this dispatch" }));
+// Item fields carry no descriptions: the top-level fields describe them once,
+// which keeps this schema (sent with every request) small.
+const modelField = (description?: string) =>
+	Type.Optional(Type.String(description ? { description } : {}));
+const thinkingField = (description?: string) =>
+	Type.Optional(StringEnum(THINKING_LEVELS, description ? { description } : {}));
 
-const TaskItem = Type.Object({
-	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task to delegate to the agent" }),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	model: ModelParam,
-	thinking: ThinkingParam,
-});
-
-const ChainItem = Type.Object({
-	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	model: ModelParam,
-	thinking: ThinkingParam,
-});
-
-const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: `Which agent directories to search. Default: "${DEFAULT_AGENT_SCOPE}" (package, user and project agents).`,
-	default: DEFAULT_AGENT_SCOPE,
+const ChildSpec = Type.Object({
+	agent: Type.String(),
+	task: Type.String(),
+	cwd: Type.Optional(Type.String()),
+	model: modelField(),
+	thinking: thinkingField(),
 });
 
 const SubagentParams = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (single mode)" })),
-	task: Type.Optional(Type.String({ description: "Task to delegate (single mode), or the follow-up message (resume mode)" })),
-	resume: Type.Optional(
-		Type.String({ description: "Id of an earlier subagent to continue with its context intact (use with task)" }),
+	agent: Type.Optional(Type.String({ description: "Agent name (single mode)" })),
+	task: Type.Optional(Type.String({ description: "The task (single mode), or the follow-up message (resume mode)" })),
+	resume: Type.Optional(Type.String({ description: "Id of an earlier subagent to continue with its context (with task)" })),
+	tasks: Type.Optional(Type.Array(ChildSpec, { description: "Parallel mode: independent {agent, task} items" })),
+	chain: Type.Optional(
+		Type.Array(ChildSpec, { description: "Chain mode: sequential {agent, task} items; {previous} in a task is the prior step's output" }),
 	),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
-	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
-	model: ModelParam,
-	thinking: ThinkingParam,
-	agentScope: Type.Optional(AgentScopeSchema),
-	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
+	model: modelField(`A tier (${TIERS.join(", ")}) or "provider/id". Default: the agent's model, else the session's`),
+	thinking: thinkingField("Thinking level"),
+	cwd: Type.Optional(Type.String({ description: "Working directory (default: the session's)" })),
+	agentScope: Type.Optional(
+		StringEnum(["user", "project", "both"] as const, {
+			description: `Agent sources to search. Default "${DEFAULT_AGENT_SCOPE}": package, user and project`,
+		}),
 	),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+});
+
+/** What codemode scripts receive instead of the text. */
+const SubagentOutput = Type.Object({
+	ok: Type.Boolean(),
+	results: Type.Array(
+		Type.Object({
+			agent: Type.String(),
+			ok: Type.Boolean(),
+			id: Type.Optional(Type.String()),
+			step: Type.Optional(Type.Number()),
+			model: Type.Optional(Type.String()),
+			output: Type.String(),
+			error: Type.Optional(Type.String()),
+		}),
+	),
+	error: Type.Optional(Type.String()),
 });
 
 // ---------------------------------------------------------------------------
@@ -517,6 +524,14 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", () => {
 		const { settings } = loadSettings(settingsPath());
 		pruneChildSessions(sessionsRoot(), settings.sessionRetentionDays);
+	});
+
+	// After compaction the model no longer sees earlier subagent results, and with
+	// them the ids it needs for resume (the SDD fix loop resumes its implementer).
+	// Re-attach the recent ones as a message appended after the compaction point.
+	pi.on("session_compact", (_event, ctx) => {
+		const recap = buildSubagentRecap(collectResumableChildren(ctx.sessionManager.getBranch()));
+		if (recap) pi.sendMessage({ customType: "superpowers-subagent-recap", content: recap, display: true });
 	});
 
 	pi.registerCommand("subagent-models", {
@@ -565,12 +580,10 @@ export default function (pi: ExtensionAPI) {
 			`Agents come from this package, the user directory (${getUserAgentsDir()}) and the nearest project's ${CONFIG_DIR_NAME}/agents; a more specific one overrides a less specific one with the same name.`,
 		].join(" "),
 		promptSnippet: "subagent: delegate a task to an isolated child agent (single, parallel, chain), or resume one by id",
-		promptGuidelines: [
-			"Superpowers `Subagent (general-purpose)` templates map to subagent with agent \"general-purpose\"; put the template's prompt in task and its model in model.",
-			"When a skill asks for a cheap/fast, standard or most capable model, pass model \"cheap\", \"mid\" or \"top\".",
-			"To send a subagent follow-up work (review findings, answers to its questions), resume it by the id from its result instead of dispatching a fresh one.",
-		],
 		parameters: SubagentParams,
+		outputSchema: SubagentOutput,
+		// Children run with the tools their agent allows, up to every tool, and may reach the web.
+		annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? DEFAULT_AGENT_SCOPE;
@@ -605,6 +618,19 @@ export default function (pi: ExtensionAPI) {
 			const done = (text: string, results: SingleResult[], isError = false) => ({
 				content: [{ type: "text" as const, text: warning + text }],
 				details: makeDetails(results),
+				structuredContent: {
+					ok: !isError,
+					results: results.map((r) => ({
+						agent: r.agent,
+						ok: !isFailedResult(r),
+						...(r.id ? { id: r.id } : {}),
+						...(r.step !== undefined ? { step: r.step } : {}),
+						...(r.model ? { model: r.model } : {}),
+						output: r.output,
+						...(isFailedResult(r) ? { error: failureText(r) } : {}),
+					})),
+					...(isError && results.length === 0 ? { error: text } : {}),
+				},
 				...(results.length ? { usage: toPiUsage(results) } : {}),
 				...(isError ? { isError: true } : {}),
 			});
@@ -643,8 +669,8 @@ export default function (pi: ExtensionAPI) {
 				resumeTarget = { found, agent };
 			}
 
-			const confirmProjectAgents = params.confirmProjectAgents ?? true;
-			if (confirmProjectAgents && ctx.hasUI && !ctx.isProjectTrusted()) {
+			// Only the user can approve repo-controlled agents; the model has no parameter to skip this.
+			if (ctx.hasUI && !ctx.isProjectTrusted()) {
 				const projectAgents = [
 					...(agentScope !== "user" ? [...requestedNames].map(findAgent) : []),
 					resumeTarget?.agent,

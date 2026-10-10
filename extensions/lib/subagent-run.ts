@@ -268,3 +268,50 @@ export function pruneChildSessions(root: string, days: number, now: number = Dat
 	}
 	return removed;
 }
+
+// ---------------------------------------------------------------------------
+// Compaction recap
+// ---------------------------------------------------------------------------
+
+export interface ResumableChild {
+	id: string;
+	agent: string;
+	/** First line of the task, capped. */
+	task: string;
+	failed: boolean;
+}
+
+/**
+ * The subagents dispatched on this branch, newest first, read from `subagent`
+ * tool results. After compaction the model no longer sees those results, so
+ * this is how it keeps the ids it needs to resume children.
+ */
+export function collectResumableChildren(entries: Iterable<unknown>, limit = 8): ResumableChild[] {
+	const byId = new Map<string, ResumableChild>();
+	for (const entry of entries) {
+		const e = entry as { type?: string; message?: { role?: string; toolName?: string; details?: unknown } };
+		if (e?.type !== "message" || e.message?.role !== "toolResult" || e.message.toolName !== "subagent") continue;
+		const results = (e.message.details as { results?: unknown } | undefined)?.results;
+		if (!Array.isArray(results)) continue;
+		for (const r of results as Array<Record<string, unknown>>) {
+			if (typeof r?.id !== "string" || typeof r.agent !== "string") continue;
+			const task = typeof r.task === "string" ? (r.task.split("\n").find((l) => l.trim()) ?? "").trim() : "";
+			byId.delete(r.id); // re-insert so a resumed child counts as recent
+			byId.set(r.id, {
+				id: r.id,
+				agent: r.agent,
+				task: task.length > 100 ? `${task.slice(0, 100)}…` : task,
+				failed: r.exitCode !== 0 || r.stopReason === "error" || Boolean(r.spawnError) || Boolean(r.timedOut),
+			});
+		}
+	}
+	return [...byId.values()].reverse().slice(0, limit);
+}
+
+export function buildSubagentRecap(children: ResumableChild[]): string | null {
+	if (children.length === 0) return null;
+	return [
+		"Subagents dispatched earlier in this session (newest first). Resume one with subagent { resume: <id>, task } to continue it with its context:",
+		...children.map((c) => `- ${c.id} (${c.agent}${c.failed ? ", failed" : ""}): ${c.task}`),
+	].join("\n");
+}

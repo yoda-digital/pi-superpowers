@@ -36,12 +36,10 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Ask the user one multiple-choice question and wait for the answer. The user picks an option or types their own. Use only for a short menu of options; ask open questions in your reply instead.",
 		promptSnippet: "ask_user: put one multiple-choice question to the user and wait for the answer",
-		promptGuidelines: [
-			"Use ask_user only when a skill offers the user a short menu of options; ask open questions in your reply.",
-		],
 		parameters: AskParams,
 		executionMode: "sequential",
 		exposure: "model-only",
+		annotations: { readOnlyHint: true, openWorldHint: false },
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const details: AskDetails = { question: params.question, options: params.options, answer: null };
