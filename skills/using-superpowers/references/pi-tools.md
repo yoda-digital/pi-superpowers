@@ -1,4 +1,4 @@
-# Pi Tool Mapping
+# Pi tool mapping
 
 Skills speak in actions ("dispatch a subagent", "create a todo", "read a file"). On Pi, with the pi-superpowers package, these resolve to the tools below.
 

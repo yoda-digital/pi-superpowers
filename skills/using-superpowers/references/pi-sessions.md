@@ -1,4 +1,4 @@
-# Pi Session Transcripts
+# Pi session transcripts
 
 Where Pi keeps session transcripts and how to read them, for `diagnosing-superpowers` and anything else that inspects past work.
 
@@ -28,11 +28,12 @@ One JSON object per line. Line 1 is the header: `{"type":"session","version":3,"
 | `usage` | Model usage recorded outside an assistant message (for example a tool's own model calls) |
 | `label`, `session_info` | Bookmarks and the session name |
 
-Useful facts:
+What to look for:
 
-- **Superpowers loaded:** the first `system` message has a `superpowers` key in `sections`, holding the bootstrap.
-- **Skills used:** `read` tool calls on `…/SKILL.md` files, or user messages starting with `<skill name=…>` (from `/skill:name`).
-- **Subagent dispatches:** `toolCall` parts with `name: "subagent"`. The matching `toolResult` ends with `[continue this subagent with its context: subagent { "resume": "<id>", … }]`, and its `details.results[].sessionFile` is the child's transcript.
-- **Cost:** sum `usage.cost.total` over assistant messages. Subagent cost is in the children's files and in the `subagent` tool result's `usage`.
+- Whether Superpowers was loaded: the first `system` message has a `superpowers` key in `sections`, holding the bootstrap.
+- Which skills were used: `read` tool calls on `…/SKILL.md` files, or user messages starting with `<skill name=…>` (from `/skill:name`).
+- Subagent dispatches: `toolCall` parts with `name: "subagent"`. The matching `toolResult` ends with `[continue this subagent with its context: subagent { "resume": "<id>", … }]`, and its `details.results[].sessionFile` is the child's transcript.
+- Compaction recaps: `custom_message` entries with `customType` `superpowers-todo-recap` or `superpowers-subagent-recap`, right after a `compaction` entry.
+- Cost: sum `usage.cost.total` over assistant messages. Subagent cost is in the children's files and in the `subagent` tool result's `usage`.
 
 Transcripts can be large. Measure first (`wc -lc`), find the long lines (`awk 'length > 100000 {print NR}'`), and pull single lines with `sed -n '<N>p' <file> | jq …` instead of reading whole files.

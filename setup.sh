@@ -107,7 +107,7 @@ printf '\n\033[1m── Summary ──\033[0m\n\n'
 if [ "$ERRORS" -eq 0 ]; then
     ok "pi-superpowers installed successfully"
 else
-    warn "$ERRORS verification warning(s) — see above"
+    warn "$ERRORS verification warning(s), see above"
 fi
 
 printf '\n  Installed components:\n'
@@ -117,6 +117,6 @@ printf '    Skills:      %s superpowers skills (upstream %s)\n' "$SKILL_COUNT" "
 printf '    References:  pi-tools.md (tool mapping), pi-sessions.md (transcripts)\n'
 printf '\n  Web tools need a Tavily key: run /web-key in Pi.\n'
 printf '  Map subagent model tiers (cheap, mid, top): run /subagent-models in Pi.\n'
-printf '\n  To verify, start Pi and send:\n'
+printf '\n  To verify, start Pi and run /superpowers, then send:\n'
 printf '    Let'\''s make a react todo list\n'
-printf '\n  The brainstorming skill should auto-trigger before any code is written.\n\n'
+printf '\n  The agent should load the brainstorming skill and ask what you want before writing code.\n\n'

@@ -78,6 +78,7 @@ describe("buildBootstrapContent", () => {
     assert.ok(content.endsWith("</EXTREMELY_IMPORTANT>"));
     assert.ok(content.includes(stripFrontmatter(readFileSync(skillPath, "utf8"))));
     assert.ok(content.includes(readFileSync(piToolsPath, "utf8").trim()));
+    assert.ok(content.includes("# Pi tool mapping"));
     assert.ok(!content.includes("name: using-superpowers"));
   });
 
@@ -88,7 +89,7 @@ describe("buildBootstrapContent", () => {
   it("still bootstraps without the tool mapping", () => {
     const content = buildBootstrapContent(skillPath, "/nonexistent/pi-tools.md");
     assert.ok(content.includes("You have superpowers."));
-    assert.ok(!content.includes("# Pi Tool Mapping"));
+    assert.ok(!content.includes("# Pi tool mapping"));
   });
 
   it("re-reads from disk on every call", () => {

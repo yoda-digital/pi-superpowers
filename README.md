@@ -1,189 +1,109 @@
 # pi-superpowers
 
-A Pi package that brings the [Superpowers](https://github.com/obra/superpowers) methodology to the [Pi coding agent](https://github.com/earendil-works/pi), built on Pi's own extension APIs.
+[Superpowers](https://github.com/obra/superpowers) for the [Pi coding agent](https://github.com/earendil-works/pi), built on Pi's own extension APIs.
 
-It contains:
-- the full Superpowers skill set, vendored unmodified from upstream (currently **v7.0.0**, pinned in `UPSTREAM.json`)
-- a bootstrap that puts the methodology in Pi's system prompt
-- a subagent tool built for Superpowers' dispatch patterns: per-dispatch model tiers, resuming a subagent with its context, parallel and chained runs
-- a todo tool and an `ask_user` picker
-- native web tools backed by Tavily
-- seven agent definitions
-- a Pi tool reference that maps Superpowers' action vocabulary to these tools
+Superpowers is a set of skills that makes a coding agent work like a careful engineer: brainstorm before building, write a plan, test first, debug from the root cause, get reviewed, verify before claiming it's done. Upstream ships a small Pi extension that loads the skills. That's enough to read them, but not enough to run the workflows at full strength. The skills expect subagents they can resume, a model choice per dispatch, a todo list, and a bootstrap that stays put for the whole session. This package provides all of that natively in Pi, and it's tuned to work on local models as well as hosted ones.
 
-## Compared to upstream's own Pi support
+Version 2.1.0 vendors Superpowers v7.0.0 (pinned in `UPSTREAM.json`).
 
-Upstream Superpowers ships a small Pi extension that injects the bootstrap and registers the skills, and leaves subagents and task tracking to third-party packages. This package goes further:
-
-| | upstream `.pi/` extension | pi-superpowers |
-|---|---|---|
-| Bootstrap | Request-local user message, dropped after the first exchange | System prompt section, on every run, recorded in the session, cache-friendly |
-| Subagent children | Get the controller's bootstrap | Marked as children; no bootstrap, no nested dispatch |
-| `Subagent (general-purpose)` templates | Need a third-party tool | `general-purpose` agent |
-| "cheap / standard / most capable model" | — | `model: "cheap" \| "mid" \| "top"`, mapped to your models |
-| SDD fix loop "resume the implementer" | — | `resume: "<id>"` |
-| Todo, ask-user, web | — | `todo`, `ask_user`, `web_*` |
-| Diagnosing a session | Model guesses the transcript format | `pi-sessions.md` documents Pi's session files and where subagent transcripts are |
-
-## What's included
-
-### Extensions
-
-| Extension | File | Purpose |
-|---|---|---|
-| **Superpowers bootstrap** | `extensions/superpowers.ts` | Puts the `using-superpowers` skill plus the Pi tool mapping into the system prompt as a `<superpowers>` section, on every run. Skills are registered by the package manifest. `/superpowers` shows the integration status. |
-| **Subagent tool** | `extensions/subagent/index.ts` | Registers the `subagent` tool and the `/subagent-models` command. Modes: single, resume, parallel, chain. Each child is an isolated `pi` process with its own persisted session. See [Subagents](#subagents). |
-| **Todo tool** | `extensions/todo.ts` | Registers the `todo` tool and the `/todos` view. State is rebuilt from tool-result history, so it follows session branching. Actions: `add`, `toggle`, `remove`, `rename`, `in_progress`, `list`, `clear`. Progress shows in pi-statusbar when installed, otherwise in Pi's footer. |
-| **Ask user** | `extensions/ask.ts` | Registers `ask_user`: one multiple-choice question as an arrow-key picker, with a "type my own" option. For the moments a skill offers a short menu. |
-| **Web tools** | `extensions/web.ts` | Registers `web_search`, `web_fetch`, `web_verify` and `web_watch` (Tavily), plus the `/web-key` command. See [Web tools](#web-tools-tavily). |
-
-### Agents
-
-They ship in the package's `agents/` directory and update with the package. None pins a model: each runs on the dispatch's `model`, otherwise the parent session's model.
-
-| Agent | Tools | Role |
-|---|---|---|
-| **general-purpose** | all | Runs any task. The target of Superpowers' `Subagent (general-purpose)` templates (implementer, reviewers, builder check, analysts). |
-| **scout** | read, bash, grep, find, ls | Fast codebase reconnaissance. Read-only. |
-| **planner** | read, bash, grep, find, ls | Ordered implementation plans with verification steps. Read-only. |
-| **implementer** | read, write, edit, bash, grep, find, ls | Executes plan tasks, writes code, runs builds and tests. |
-| **reviewer** | read, bash, grep, find, ls | Code review for correctness, security, quality and plan alignment. Read-only. |
-| **debugger** | read, write, edit, bash, grep, find, ls | Systematic debugging: reproduce, investigate, hypothesize, fix, verify. |
-| **researcher** | web_search, web_fetch, web_verify, web_watch, read, write | Web research with a cited report. Needs a Tavily key (`/web-key`). |
-
-### Skills (from Superpowers v7.0.0)
-
-- **using-superpowers**: the bootstrap skill, always in the system prompt
-- **brainstorming**: works out what you want before anything is built, sizes the work, builder-checks the design
-- **writing-plans**: lean plans that record decisions, with a Review Focus section
-- **executing-plans**: native inline execution with a ledger and one final review
-- **subagent-driven-development**: one implementer per task, a review after each, a resume-based fix loop
-- **dispatching-parallel-agents**: parallel fan-out for independent problems
-- **test-driven-development**: RED-GREEN-REFACTOR, with the project suite defining green
-- **systematic-debugging**: root cause before fixes
-- **requesting-code-review** and **receiving-code-review**
-- **finishing-a-development-branch**
-- **using-git-worktrees**
-- **verification-before-completion**: evidence before claims
-- **diagnosing-superpowers**: figures out what went wrong in a session, with `path:line` evidence
-- **writing-skills**
-
-### References
-
-| File | Purpose |
-|---|---|
-| `references/pi-tools.md` | Maps Superpowers actions (dispatch a subagent, pick a model tier, resume, create a todo, …) to Pi tools. Part of the bootstrap. |
-| `references/pi-sessions.md` | Where Pi keeps session and subagent transcripts and how to read them. Loaded on demand, for example by `diagnosing-superpowers`. |
-
-Both are also copied into `skills/using-superpowers/references/`, replacing upstream's Pi reference there.
-
-## Installation
-
-### Option A: `pi install` (recommended for end users)
+## Quick start
 
 ```bash
 pi install git:github.com/yoda-digital/pi-superpowers
 ```
 
-That is all; update with `pi update --extensions`.
+Start Pi and run `/superpowers`. It checks the bootstrap, the skills, the tools, the subagent model tiers and the web key, and tells you how to fix anything that's off. Two things you'll probably want to set up once:
 
-### Option B: Local checkout (recommended for development)
+- `/subagent-models` maps the `cheap`, `mid` and `top` tiers that the skills ask for to models you have. Until you do, every subagent runs on your session's model.
+- `/web-key` stores a [Tavily](https://app.tavily.com) key for the web tools.
 
-Pi loads a local package from its path without copying it, so edits take effect on the next session (or `/reload`).
+Then try upstream's acceptance test: in a clean session, send `Let's make a react todo list`. The agent should load the brainstorming skill and start asking what you want before it writes any code.
 
-```bash
-git clone git@github.com:yoda-digital/pi-superpowers.git ~/gits/pi-superpowers
-pi install ~/gits/pi-superpowers
-```
+Update with `pi update --extensions`.
 
-Do not symlink individual extension files into `~/.pi/agent/extensions/`. Pi's loader resolves relative paths from the symlink's location, not the target's, so the bootstrap cannot find `skills/` and the extensions cannot import their `extensions/lib/` helpers.
+## What's in the package
 
-### Option C: Per-project (no global install)
+### Extensions
 
-```bash
-cd /path/to/your/project
-pi install -l ~/gits/pi-superpowers   # writes .pi/settings.json
-```
+| File | What it registers |
+|---|---|
+| `extensions/superpowers.ts` | The bootstrap: the `using-superpowers` skill and the Pi tool mapping, as a `<superpowers>` section of the system prompt on every run. Also the `/superpowers` status command. |
+| `extensions/subagent/index.ts` | The `subagent` tool (single, resume, parallel, chain) and `/subagent-models`. See [Subagents](#subagents). |
+| `extensions/todo.ts` | The `todo` tool (`add`, `toggle`, `in_progress`, `rename`, `remove`, `list`, `clear`) and the `/todos` view. Progress shows in pi-statusbar if you have it, otherwise in Pi's footer. |
+| `extensions/ask.ts` | `ask_user`, which shows one multiple-choice question as a picker, with a way to type your own answer. Skills use it when they offer a short menu. Without an interactive UI it tells the model to ask in its reply instead. |
+| `extensions/web.ts` | `web_search`, `web_fetch`, `web_verify` and `web_watch` (Tavily), and `/web-key`. See [Web tools](#web-tools-tavily). |
 
-Pi reads `.pi/settings.json` only after you trust the project.
+### Agents
 
-### Option D: Setup script
+Agent definitions live in `agents/` and update with the package. None of them pins a model.
 
-```bash
-git clone git@github.com:yoda-digital/pi-superpowers.git
-cd pi-superpowers
-./setup.sh
-```
+| Agent | Tools | Role |
+|---|---|---|
+| `general-purpose` | all | Runs any task. Superpowers' `Subagent (general-purpose)` dispatch templates (implementer, reviewers, builder check, analysts) map to it. |
+| `scout` | read, bash, grep, find, ls | Quick read-only reconnaissance of a codebase |
+| `planner` | read, bash, grep, find, ls | Ordered implementation plans with verification steps, read-only |
+| `implementer` | read, write, edit, bash, grep, find, ls | Carries out plan tasks and runs the builds and tests |
+| `reviewer` | read, bash, grep, find, ls | Read-only review for correctness, security and plan alignment |
+| `debugger` | read, write, edit, bash, grep, find, ls | Reproduce, investigate, fix, verify |
+| `researcher` | web_search, web_fetch, web_verify, web_watch, read, write | Web research with a cited report. Needs a Tavily key. |
 
-The setup script checks that Pi is installed, runs `pi install` on the checkout and prints a verification summary. If `~/.pi/agent/agents/` holds copies of the package agents from an older install, it removes the unchanged ones (they would block updates) and warns about modified ones (they override the package version).
+### Skills
 
-Do not install upstream Superpowers' own Pi extension alongside this package: both would register the same skills.
+All 15 Superpowers v7.0.0 skills, unmodified: using-superpowers (always loaded through the bootstrap), brainstorming, writing-plans, executing-plans, subagent-driven-development, dispatching-parallel-agents, test-driven-development, systematic-debugging, requesting-code-review, receiving-code-review, finishing-a-development-branch, using-git-worktrees, verification-before-completion, diagnosing-superpowers and writing-skills.
 
-## Verifying it works
+### References
 
-Upstream's acceptance test: open a clean Pi session and send exactly
+`references/pi-tools.md` translates the actions the skills ask for into Pi tools, for example "dispatch a subagent on the most capable model" into `subagent` with `model: "top"`. It's part of the bootstrap, so the model always has it. `references/pi-sessions.md` explains where Pi keeps session and subagent transcripts and how to read them. The model loads it when it needs it, mostly for diagnosing-superpowers. Both files are copied into `skills/using-superpowers/references/`, where they replace upstream's Pi reference.
 
-> Let's make a react todo list
+## How this differs from upstream's Pi extension
 
-A working installation triggers the **brainstorming** skill before any code is written. Then send a second, unrelated request (for example "add a settings page"). It should go through the skills too, since the bootstrap is present on every run, not only the first.
+| | upstream `.pi/` extension | pi-superpowers |
+|---|---|---|
+| Bootstrap | A request-local user message. Pi never stores it, and the extension stops injecting it after the first exchange, so from the second prompt on the model works without it. | A system prompt section, set on every run and recorded in the session |
+| Subagent children | Get the controller's bootstrap | Run without it, and can't dispatch subagents of their own |
+| `Subagent (general-purpose)` templates | Need a third-party package | `general-purpose` agent |
+| "Use a cheap / standard / most capable model" | Not available | `model: "cheap" \| "mid" \| "top"`, mapped to your models |
+| SDD fix loop: "resume the implementer" | Not available | `resume: "<id>"` |
+| Todo list, ask the user, web | Not available | `todo`, `ask_user`, `web_*` |
+| State after compaction | Nothing to keep (no todo or subagent tools) | Open todos and resumable subagent ids are re-attached |
+| Diagnosing a past session | The model guesses the transcript format | `pi-sessions.md` documents it |
 
-Also check:
-
-1. `/superpowers` reports no ✗ lines: bootstrap, skills, active tools, subagent tiers and the web key.
-2. `subagent` with `agent: "scout"` and a task returns a report ending in `[continue this subagent with its context: subagent { "resume": "scout-…" …}]`. A follow-up with that `resume` id remembers the first exchange.
-3. After `/web-key`, a current-events question ("what changed in the latest Node.js release?") makes the agent call `web_search`.
+Don't install upstream's Pi extension next to this one. Both register the same skills.
 
 ## How it works
 
 ```
 pi-superpowers/
 ├── extensions/
-│   ├── superpowers.ts          # bootstrap → system prompt section
-│   ├── subagent/
-│   │   ├── index.ts            # subagent tool, /subagent-models
-│   │   └── agents.ts           # agent discovery: package, user, project
-│   ├── todo.ts                 # todo tool, /todos
-│   ├── ask.ts                  # ask_user tool
-│   ├── web.ts                  # web_* tools, /web-key
-│   └── lib/                    # Pi-independent logic the tests import: bootstrap,
-│                               #   agent config, child args and output, model tiers,
-│                               #   process runner and session store, todo state, web/
-├── agents/                     # agent definitions (markdown + frontmatter)
-├── skills/                     # vendored upstream skills + Pi overlay (do not edit)
-├── references/                 # pi-tools.md, pi-sessions.md (the overlay's source)
-├── scripts/sync-upstream.sh    # re-vendor skills from obra/superpowers
-├── UPSTREAM.json               # the upstream ref and commit skills/ comes from
-└── tests/                      # node --test suite, with a fake `pi` for the runner
+│   ├── superpowers.ts          bootstrap section, /superpowers
+│   ├── subagent/index.ts       subagent tool, /subagent-models
+│   ├── subagent/agents.ts      agent discovery: package, user, project
+│   ├── todo.ts                 todo tool, /todos
+│   ├── ask.ts                  ask_user
+│   ├── web.ts                  web_* tools, /web-key
+│   └── lib/                    the logic, with no runtime imports from Pi, so the
+│                               tests run it directly
+├── agents/                     agent definitions
+├── skills/                     upstream skills plus the Pi overlay (never edit by hand)
+├── references/                 pi-tools.md and pi-sessions.md, the overlay's source
+├── scripts/                    sync-upstream.sh, eval-skills.mjs, typecheck.sh
+├── UPSTREAM.json               which upstream ref and commit skills/ came from
+└── tests/                      node --test suite, including a fake `pi`
 ```
 
-1. **Bootstrap.**
-   - On every `before_agent_start`, `superpowers.ts` reads `skills/using-superpowers/SKILL.md` and `references/pi-tools.md` and sets them as the `superpowers` system prompt section.
-   - Pi records the prompt in the session and replays it after compaction, resume and branch navigation.
-   - An unchanged section is not re-recorded, so the provider's prompt cache stays warm. An edited `SKILL.md` takes effect on the next prompt.
-   - Processes started by the `subagent` tool carry `PI_SUPERPOWERS_CHILD=1`, and the bootstrap stays out of them.
+The bootstrap is set in Pi's `before_agent_start` event as the `superpowers` section of the system prompt. Pi stores the prompt in the session and replays it after compaction, resume and branch navigation. An unchanged section isn't recorded again, so it doesn't break the provider's prompt cache. If you edit `SKILL.md`, the change shows up on your next prompt. Processes started by the `subagent` tool carry `PI_SUPERPOWERS_CHILD=1`, and the bootstrap skips them.
 
-2. **Skills** are declared in the package manifest (`pi.skills`). Pi lists them in the system prompt and the model loads one with `read` when it applies. Users can still turn individual skills off through Pi's package resource filters.
+Skills are declared in `package.json` (`pi.skills`). Pi lists each skill's name and description in the system prompt, and the model reads a `SKILL.md` when one applies. You can switch individual skills off with Pi's package resource filters.
 
-3. **Subagents.** See [Subagents](#subagents).
+Compaction would normally wipe out two things the workflows depend on: the todo list, and the ids of subagents the model may need to resume. After each compaction, the todo and subagent extensions append a short recap with the open todos and the recent subagents. The recap goes after the compaction point, so the compacted part of the prompt stays cacheable.
 
-4. **Todo.**
-   - State lives in tool-result details, not external files, so it branches with the session.
-   - Every action produces a new immutable snapshot.
+The tools follow a few rules:
 
-5. **Web tools.**
-   - Read-only, parallel-safe Tavily calls.
-   - Long results are truncated to Pi's limits and the full text is saved to a temp file.
-
-6. **State across compaction.** Compaction summarizes old tool results away, and with them the todo list and the ids of subagents the model may need to resume. After each compaction the todo and subagent extensions append a short recap: the open todos and the recent subagents with their ids. They are appended after the compaction point, so the compacted prefix stays cacheable.
-
-7. **Tool contracts.**
-   - Every tool declares MCP-style `annotations` (read-only, destructive, open-world). Permission extensions can use them to decide which calls to confirm.
-   - `subagent` and `todo` declare an `outputSchema` and return `structuredContent`, so codemode scripts get typed results (`ok`, `id`, `output`, `error` per child; the todo list) instead of text.
-   - `todo` runs sequentially, because its calls share one list.
-   - Only the user can approve project-local agents: the model has no parameter to skip that confirmation.
-   - Web tool results are labelled as third-party content, so instructions inside a page are read as data.
-
-8. **Tool mapping.** `references/pi-tools.md` translates Superpowers' action vocabulary into Pi tools. For example, a `Subagent (general-purpose)` dispatch becomes `subagent` with `agent: "general-purpose"`, and "most capable model" becomes `model: "top"`.
+- Each one declares MCP-style `annotations` (read-only, destructive, open-world) that permission extensions can act on.
+- `subagent` and `todo` return typed `structuredContent` next to their text, so codemode scripts get data instead of prose.
+- `todo` calls run one at a time, since they share a list.
+- Only you can approve a project-local agent. The model has no parameter that skips that confirmation.
+- Web results arrive labelled as third-party content, so instructions hidden in a page are read as data.
 
 ## Subagents
 
@@ -194,34 +114,26 @@ subagent { tasks: [{ agent, task, model? }, ...] }                       paralle
 subagent { chain: [{ agent, task: "... {previous} ..." }, ...] }         chain
 ```
 
-**Each child process:**
-- runs `pi --mode json -p --no-extensions --no-skills --no-themes`;
-- gets the task on stdin, so there is no argv size limit;
-- has its own session in `~/.pi/agent/superpowers/subagent-sessions/<parent-session-id>/`;
-- gets the project's AGENTS.md/CLAUDE.md, unless the agent sets `contextFiles: false`;
-- inherits the parent's project-trust decision (`--approve` or `--no-approve`), but only when its `cwd` is inside the parent's project; elsewhere it gets `--no-approve`;
-- has only the tools its agent lists. Children never get the `subagent` tool, so there is no nested dispatch;
-- gets the web tools loaded explicitly (`-e`) when its agent lists a `web_*` tool or allows all tools.
+Each child is a separate process: `pi --mode json -p --no-extensions --no-skills --no-themes`. It gets the task on stdin, so long tasks don't hit the argv size limit. It keeps its session in `~/.pi/agent/superpowers/subagent-sessions/<parent-session-id>/` so you can resume it later.
 
-**Results:**
-- Each result ends with a footer naming the child's id, model and usage, and how to resume it.
-- Children's token usage is reported to Pi, so it counts toward the session totals.
-- The parent session stores a summary of each child (final output, a capped list of its tool calls, usage), not its full transcript. The transcript stays in the child's own session file.
+What a child can do is narrower than what its parent can do:
 
-**Resume** reopens the child's session with the same agent, model and working directory and sends `task` as the next message. This is what subagent-driven development's fix loop asks for: rounds 1-3 send review findings back to the same implementer, context intact. Children can be resumed across `/new` and restarts. A child that is still running cannot be resumed a second time in parallel. Child sessions of a parent that has not dispatched or resumed anything for `sessionRetentionDays` are deleted at session start.
+- It gets the project's AGENTS.md or CLAUDE.md, unless its agent sets `contextFiles: false`.
+- It inherits the parent's project trust (`--approve` or `--no-approve`), but only when its working directory is inside the parent's project. Anywhere else it runs with `--no-approve`.
+- It only has the tools its agent lists, and never the `subagent` tool, so subagents can't spawn subagents.
+- If its agent lists a `web_*` tool or allows all tools, the web extension is loaded into it explicitly.
 
-**Model selection.** The precedence is:
-1. the dispatch's `model`;
-2. the agent's `model` frontmatter;
-3. the parent session's model.
+Every result ends with a footer naming the child's id, model and token usage, plus the exact call to resume it. The children's usage counts toward your session totals. The parent session stores a summary of each child (final answer, a capped list of tool calls, usage) and leaves the full transcript in the child's own session file.
 
-Each of these can be a tier (`cheap`, `mid`, `top`) or a `provider/id`. A tier that is not mapped falls back to the parent's model, and the result says so. `thinking` works the same way. The parent's thinking level is inherited only when the child runs the parent's model.
+Resume reopens a child's session with the same agent, model and working directory and sends `task` as its next message. Subagent-driven development needs this: in fix rounds 1 to 3, the review findings go back to the same implementer, which still has its context. You can resume a child after `/new` or a restart. You can't resume one that's still running. Child sessions belonging to a parent that hasn't dispatched or resumed anything for `sessionRetentionDays` are deleted when a session starts.
 
-**Timeouts and failures.**
-- A child that runs past `timeoutMinutes` gets SIGTERM, then SIGKILL, and is reported as failed with its partial output.
-- Spawn errors, non-zero exits and model errors (`stopReason: "error"`) are reported as failures with the reason.
+A child's model comes from the first of these that is set: the dispatch's `model`, the agent's `model` frontmatter, the parent session's model. Each can be a tier (`cheap`, `mid`, `top`) or a `provider/id`. If a tier isn't mapped, the child falls back to the session's model and the result says so. `thinking` works the same way. A child inherits the parent's thinking level only when it runs the parent's model, because a level picked for one model can be wrong for another.
 
-### Settings: `~/.pi/agent/superpowers/subagents.json`
+A child that runs longer than `timeoutMinutes` gets SIGTERM, then SIGKILL, and is reported as failed along with its partial output. Spawn errors, non-zero exits and model errors (`stopReason: "error"`) also come back as failures, with the reason.
+
+### Settings
+
+`~/.pi/agent/superpowers/subagents.json`, every field optional:
 
 ```json
 {
@@ -233,152 +145,147 @@ Each of these can be a tier (`cheap`, `mid`, `top`) or a `provider/id`. A tier t
 }
 ```
 
-All fields are optional. The defaults are no tiers (everything uses the session model), concurrency 4, 8 parallel tasks, 60 minutes (0 disables the timeout) and 14 days (0 keeps child sessions forever). `/subagent-models` picks the three tiers from your configured models and writes the file. With a single local model server, set `concurrency` to the number of requests it actually serves at once; extra children only queue.
+Without the file you get no tiers (everything runs on the session model), 4 children at once, at most 8 tasks per parallel call, a 60-minute timeout and 14 days of retention. A timeout of 0 turns it off, and 0 days keeps child sessions forever. `/subagent-models` writes the tiers for you from the models Pi knows about. If you run one local model server, set `concurrency` to the number of requests it really serves in parallel. Extra children just wait in its queue.
 
 ### Agent definitions
 
-The `subagent` tool reads agent definitions from three places, from least to most specific:
+The tool looks for agents in three places. A more specific one replaces a less specific one with the same `name`:
 
 | Source | Directory | Shown as |
 |---|---|---|
-| Package | `agents/` inside this package (updates with `pi update --extensions`) | `package` |
+| Package | `agents/` in this package | `package` |
 | User | `~/.pi/agent/agents/` | `user` |
-| Project | nearest `.pi/agents/` up from the working directory | `project` |
+| Project | the nearest `.pi/agents/` above the working directory | `project` |
 
-An agent in a more specific place replaces a less specific one with the same `name`, and listings say so, for example `scout (user, overrides package)`. An override stops receiving package updates for that agent; delete it to go back to the package version.
+Listings show the replacement, for example `scout (user, overrides package)`. An override no longer gets package updates. Delete it to go back to the package version. To customize a package agent, copy it to `~/.pi/agent/agents/` and edit the copy.
 
 ```yaml
 ---
 name: planner
 description: Creates precise implementation plans
-tools: read, bash, grep, find, ls   # optional; omit to allow all tools
+tools: read, bash, grep, find, ls   # optional; leave it out to allow every tool
 model: mid                          # optional; a tier or provider/id
 thinking: high                      # optional
-contextFiles: false                 # optional; keep AGENTS.md/CLAUDE.md out of the child
+contextFiles: false                 # optional; keeps AGENTS.md/CLAUDE.md out of the child
 ---
 
-System prompt content here...
+The agent's instructions. They're appended to the child's system prompt.
 ```
 
-The markdown body is appended to the child's system prompt. To customize a package agent, copy it to `~/.pi/agent/agents/` (or a project's `.pi/agents/`) and edit the copy.
+By default (`agentScope: "both"`) the tool searches all three places. `"user"` limits it to package and user agents, and `"project"` limits it to project agents. In a project you haven't trusted, the tool asks you before it runs a project-local agent, and before it resumes one. It can only ask in an interactive session. In print or JSON mode it runs them without asking.
 
-By default (`agentScope: "both"`) the tool uses package, user and project agents. `agentScope: "user"` restricts it to package and user agents; `"project"` restricts it to project agents. When the project is not trusted, the tool asks before running project-local agents. It asks only in interactive sessions; in print/JSON mode it runs them without asking.
+### Lean prompts for local models
 
-### Prompt mode for local models
-
-Some local models (observed with Qwen via Ollama) emit tool calls as plain text once the system prompt grows. For those, opt into lean mode before starting Pi:
+Some local models (we've seen it with Qwen on Ollama) start writing tool calls as plain text once the system prompt gets long. If yours does, set this before starting Pi:
 
 ```bash
 export PI_SUBAGENT_PROMPT_MODE=lean
 ```
 
-In lean mode a child gets only a one-line `[Role: name — description]` prefix instead of the agent body. Unless the dispatch or agent names a model, it uses the defaults from `settings.json`. Tool restrictions still apply, but the agent's instructions do not reach the model.
+In lean mode a child gets a one-line `[Role: name — description]` prefix instead of the agent's instructions. Unless the dispatch or agent names a model, it uses the defaults from `settings.json`. Tool restrictions still apply.
 
 ## Web tools (Tavily)
 
-The web tools call the [Tavily API](https://docs.tavily.com) and need an API key (free tier at [app.tavily.com](https://app.tavily.com)). Configure it once, in any of these ways (first match wins):
+The web tools call the [Tavily API](https://docs.tavily.com). The free tier is enough to start. The key is looked up in this order:
 
-1. `TAVILY_API_KEY` in the environment Pi starts with.
-2. `/web-key tvly-...` in a Pi session (or `/web-key` alone to be prompted). The key is checked with one search (1 credit) and saved to `~/.pi/agent/superpowers/tavily.env` with mode 600.
-3. A `TAVILY_API_KEY=tvly-...` line in that file, written by hand.
+1. `TAVILY_API_KEY` in Pi's environment.
+2. `~/.pi/agent/superpowers/tavily.env`, which `/web-key tvly-...` writes (mode 600) after checking the key with one search. `/web-key` on its own prompts for the key.
+3. A `TAVILY_API_KEY=tvly-...` line you add to that file yourself.
 
 | Tool | What it does | Credits |
 |---|---|---|
-| `web_search` | `query`, or `queries` (2-5 phrasings) in parallel, merged by URL with domain consensus. Options: `topic` (`general`/`news`/`finance`), `since`, `depth`, `max_results`, `include_answer`, `include_domains`, `exclude_domains`, `extract_top` (also read the top 1-5 pages), `max_chars` | 1 per query (2 with `depth: "advanced"`), plus extraction |
-| `web_fetch` | Reads `urls` (1-20); `intent` returns the parts of each page most relevant to it | 1 per 5 pages (2 advanced) |
-| `web_verify` | Evidence summary and sources for a `claim`, and for a `counter` claim when given | 1 per side |
-| `web_watch` | First call records a baseline for `name`; later calls return only new sources. State: `~/.pi/agent/superpowers/web-watch/<name>.json` (delete it to reset) | 1 per call |
+| `web_search` | `query`, or 2 to 5 `queries` run in parallel and merged by URL. Options: `topic` (`general`, `news`, `finance`), `since`, `depth`, `max_results`, `include_answer`, `include_domains`, `exclude_domains`, `extract_top` (also read the top 1 to 5 pages), `max_chars` | 1 per query, 2 with `depth: "advanced"`, plus extraction |
+| `web_fetch` | Reads 1 to 20 `urls`. With `intent`, returns the parts of each page that matter for it. | 1 per 5 pages, 2 when advanced |
+| `web_verify` | Evidence and sources for a `claim`, and for a `counter` claim if you give one | 1 per side |
+| `web_watch` | The first call records a baseline under `name`, and later calls return only new sources. It's the one web tool that writes something: its state in `~/.pi/agent/superpowers/web-watch/<name>.json` (delete the file to reset). | 1 per call |
 
-## Updating the skills from upstream
+Long results are cut to Pi's output limits, and the full text is saved to a temp file whose path is in the result.
+
+## Keeping up with upstream
 
 ```bash
-npm run sync-upstream              # re-sync the ref in UPSTREAM.json
-bash scripts/sync-upstream.sh v7.1.0   # move to another upstream tag or commit
+npm run sync-upstream                    # re-sync the ref in UPSTREAM.json
+bash scripts/sync-upstream.sh v7.1.0     # move to another tag or commit
 ```
 
-The script replaces `skills/` with upstream's tree at that ref, copies `references/*.md` over `skills/using-superpowers/references/`, and records the ref and commit in `UPSTREAM.json`. Never edit `skills/` by hand. Pi-specific guidance belongs in `references/`, so a sync never needs a merge. After a sync, check the release notes for new capabilities the skills ask of the harness and map them in `references/pi-tools.md`.
+The script swaps `skills/` for upstream's tree at that ref, copies `references/*.md` into `skills/using-superpowers/references/`, and records the ref and commit in `UPSTREAM.json`. Nothing Pi-specific lives inside `skills/`, so a sync never needs a merge. After one, read upstream's release notes for anything new the skills expect from the harness, and map it in `references/pi-tools.md`.
 
-## Skill-activation evals
+## Evals
 
 ```bash
-npm run eval                                  # all cases, the session's default model
+npm run eval                                              # every case, your default model
 node scripts/eval-skills.mjs --case react-todo --runs 3 --model ollama/qwen3:32b
 ```
 
-Each case runs real `pi` sessions in a throwaway project, with this package loaded as installed, and checks two things:
-- **Bootstrap probe:** a probe extension records whether every request to the model carried the bootstrap. This check does not depend on the model.
-- **Behavior:** the skill's `SKILL.md` must be read before the first file change.
+`scripts/eval-skills.mjs` runs real Pi sessions in throwaway projects, with this package loaded the way you installed it. Each case is graded twice:
 
-| Case | Checks |
+- A probe extension records whether every request sent to the model carried the bootstrap. This part doesn't depend on the model.
+- The tool calls must show the right skill's `SKILL.md` being read before the first file change.
+
+| Case | What it checks |
 |---|---|
 | `react-todo` | Upstream's acceptance test: brainstorming before any code |
-| `second-prompt` | A second prompt in the same running session still gets the bootstrap and the skill |
-| `failing-test` | A failing `npm test` triggers systematic-debugging before any edit |
-| `near-miss` | A plain question is answered without changing files |
+| `second-prompt` | A second prompt in the same running session still has the bootstrap and still triggers the skill |
+| `failing-test` | A failing `npm test` leads to systematic-debugging before any edit |
+| `near-miss` | A plain question gets an answer and no file changes |
 
-The probe is what catches a lost bootstrap. Upstream's description of brainstorming in Pi's skill list is enough for a capable model to load it, so behavior alone can pass without one. Behavior is model-dependent; `--runs N` reports a pass rate. Grading is unit-tested in `tests/eval-grading.test.mjs`.
+The probe matters more than it looks. Pi's skill list carries upstream's description of brainstorming, and a capable model will load the skill from that alone. So the behavioral check passed even against the old code that lost the bootstrap. The probe failed it. Model behavior also varies from run to run, so use `--runs N` for a pass rate. The grading itself is unit-tested in `tests/eval-grading.test.mjs`.
 
-## Running tests
+## Tests and type checks
 
 ```bash
-npm test          # or: bash tests/run.sh
+npm test             # node --test, no Pi needed (Node.js 22.18+)
+npm run typecheck    # tsc against the installed Pi's declarations
 ```
 
-This needs Node.js 22.18 or newer: the tests import the real TypeScript modules in `extensions/lib/` through Node's built-in type stripping. No Pi installation is required. The suite covers:
-- the bootstrap, driven through a fake Pi host;
-- agent discovery and model-tier resolution;
-- child argv and output parsing;
-- the child process runner, against `tests/fixtures/fake-pi.mjs`: stdin delivery, JSONL framing, timeouts, SIGKILL escalation, spawn errors and abort;
-- the child session store;
-- the todo state machine, and the todo and subagent recaps after compaction;
-- the `/superpowers` status report and the eval grading;
-- the web tools, against a fake Tavily API;
-- that this README, `references/` and the vendored skills agree with the code.
+The tests import the real modules in `extensions/lib/` through Node's built-in TypeScript type stripping, and drive the bootstrap extension through a fake Pi host. The subagent runner is tested end to end against `tests/fixtures/fake-pi.mjs`: stdin delivery, JSONL framing, timeouts, SIGKILL escalation, spawn errors and abort. Other tests cover:
 
-The Pi-bound wiring (`extensions/*.ts`, `extensions/subagent/*.ts`) is checked with `tsc` against Pi's type declarations and with a real session (see [Verifying it works](#verifying-it-works)).
+- agent discovery and model tiers
+- the child session store
+- the todo state machine and the compaction recaps
+- the `/superpowers` report and the web tools against a fake Tavily
+- that this README, `references/` and the vendored skills agree with the code
+
+`npm run typecheck` copies `extensions/` to a temporary directory and checks it against the Pi you have installed. It works on a copy because a `node_modules` inside this package would get in the way of how Pi loads it.
 
 ## Troubleshooting
 
-### Skills do not trigger
+**Skills don't trigger.** Run `/superpowers` first. Then check that the package is listed under `packages` in `~/.pi/agent/settings.json` (or the project's `.pi/settings.json`). Symlinked extension files don't work, because Pi resolves their imports from the symlink's location. A session file shows whether the bootstrap was there: its first `system` message has a `superpowers` key in `sections`. `/skill:` lists the skills Pi found.
 
-- Run `/superpowers`: it checks the bootstrap, skills, active tools, subagent tiers and web key, and says how to fix each.
-- The package must be listed under `packages` in `~/.pi/agent/settings.json` (or the project's `.pi/settings.json`). Symlinked extension files do not work (see Option B).
-- The session file shows whether the bootstrap is present: the first `system` message has a `superpowers` key in `sections`.
-- `/skill:` lists the discovered skills.
+**Web tools fail.** "No Tavily API key configured" means you need `/web-key`. "Tavily API error 401" means the key is invalid or revoked. Other Tavily errors, such as rate or usage limits, come straight from Tavily, so check your account. A subagent with no web tools needs them listed in its agent's `tools`.
 
-### Web tools fail
+**Subagents misbehave:**
 
-- "No Tavily API key configured": run `/web-key` (see [Web tools](#web-tools-tavily)).
-- "Tavily API error 401": the key is invalid or revoked. Set a new one with `/web-key`.
-- Other "Tavily API error …" messages (rate or usage limits) come straight from Tavily; check your account at app.tavily.com.
-- A subagent says it has no web tools: its agent's `tools` must list them (for example `web_search, web_fetch`).
+- "could not start the child process": the tool runs Pi's own executable (Node plus Pi's script), and only falls back to `pi` on `PATH` as a last resort. The message gives the cause.
+- A tier is "not configured": map it with `/subagent-models` or in `subagents.json`.
+- "No subagent with id … to resume": the session was pruned or the id is wrong, so dispatch a fresh one. Resume also refuses when the child's agent no longer exists or its working directory is gone.
+- The child ignores its instructions: check whether `PI_SUBAGENT_PROMPT_MODE=lean` is set, because in lean mode agents get only a role line.
+- The child prints raw `<tool_call>` text: that's a local model struggling with a long prompt. Try lean mode.
+- "Unknown agent": agent files go in `~/.pi/agent/agents/` or `.pi/agents/`, end in `.md`, and need `name` and `description` in their frontmatter. Check `agentScope` as well.
+- Timeouts: raise `timeoutMinutes`, or lower `concurrency` if your model server is queueing children.
 
-### Subagent problems
+**Todos disappeared.** The list is rebuilt from the `todo` results on the current branch, so switching branches shows that branch's list. `clear` can't be undone.
 
-- **"could not start the child process"**: the tool runs Pi's own executable (`process.execPath` with Pi's script), and `pi` on `PATH` only as a last resort. The error message names the cause.
-- **A tier is "not configured"**: map it with `/subagent-models` or in `subagents.json`.
-- **"No subagent with id … to resume"**: the child's session was pruned or the id is mistyped. Dispatch a fresh one. Resume also refuses when the child's agent no longer exists or its working directory is gone.
-- **Ignores its instructions, or prints tool calls as text**: if `PI_SUBAGENT_PROMPT_MODE=lean` is set, agents receive only a role line; unset it unless your model needs it. If a local model emits raw `<tool_call>` text, try lean mode.
-- **Unknown agent**: custom agent files go in `~/.pi/agent/agents/` or `.pi/agents/`, need `name` and `description` frontmatter, and end in `.md`. With `agentScope: "user"` project agents are not searched; with `"project"`, package and user agents are not.
-- **Times out**: raise `timeoutMinutes`, or lower `concurrency` if a local model server is queueing children.
+**`pi install` says "Could not resolve host".** Use the full source, `git:github.com/yoda-digital/pi-superpowers`. For a private fork, clone it yourself and `pi install` the local path, since `pi install git:` clones over HTTPS without credentials.
 
-### Todo state lost
+## Development
 
-- Todo state is rebuilt from tool-result history on the current branch. Switching branches shows that branch's history.
-- `clear` resets the state. There is no undo.
+Pi loads a local package straight from its path, so a checkout is the easiest way to work on this:
 
-### `pi install` fails with "Could not resolve host"
+```bash
+git clone git@github.com:yoda-digital/pi-superpowers.git ~/gits/pi-superpowers
+pi install ~/gits/pi-superpowers        # or: pi install -l ... for one project
+```
 
-- Use the full path: `pi install git:github.com/yoda-digital/pi-superpowers` (not `git:yoda-digital/...`).
-- If the repo is private, clone it yourself and install the local checkout (Option B), since `pi install git:` clones over HTTPS without auth.
+Edits take effect in the next session, or after `/reload`. `./setup.sh` does the install for you and checks the result. Older versions copied the agents into `~/.pi/agent/agents/`, where a copy overrides the package version. The script removes copies that were never changed and warns about modified ones.
 
-## Contributing
+Some rules for changes:
 
-1. Fork and clone.
-2. Change extensions in `extensions/`, agents in `agents/`, or Pi guidance in `references/`. Skills come from upstream [Superpowers](https://github.com/obra/superpowers): contribute there, then run `npm run sync-upstream`.
-3. Put new logic in `extensions/lib/` (no runtime imports from Pi) so the tests can import it, and run `npm test`.
-4. Test with a real Pi session: run the acceptance test and confirm brainstorming triggers.
-5. Open a PR describing the problem you solved and how you tested it.
+- Logic goes in `extensions/lib/`, with no runtime imports from Pi, so the tests can run it directly.
+- Pi guidance goes in `references/`.
+- Skills come from upstream: change them there, then run `npm run sync-upstream`.
+
+Before opening a PR, run `npm test`, `npm run typecheck`, and the acceptance test in a real session.
 
 ## License
 

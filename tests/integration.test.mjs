@@ -131,7 +131,7 @@ const registeredTools = pkg.pi.extensions
 
 describe("README", () => {
   it("lists exactly the shipped agents", () => {
-    const listed = [...readme.matchAll(/^\| \*\*([\w-]+)\*\* \|/gm)].map((m) => m[1]).sort();
+    const listed = [...readme.matchAll(/^\| `([\w-]+)` \| (?:all|[a-z_]+(?:, [a-z_]+)*) \|/gm)].map((m) => m[1]).sort();
     assert.deepEqual(listed, shippedAgents);
   });
 
