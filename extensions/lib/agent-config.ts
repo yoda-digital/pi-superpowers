@@ -25,7 +25,12 @@ export interface AgentConfig {
 	name: string;
 	description: string;
 	tools?: string[];
+	/** A tier name (cheap, mid, top) or "provider/id". */
 	model?: string;
+	/** Thinking level for this agent's children. */
+	thinking?: string;
+	/** `contextFiles: false` keeps AGENTS.md / CLAUDE.md out of the child. Default: loaded. */
+	contextFiles?: boolean;
 	systemPrompt: string;
 	source: AgentSource;
 	/** Set when this definition replaces one with the same name from a less specific source. */
@@ -93,6 +98,8 @@ export function loadAgentsFromDir(
 			description: frontmatter.description,
 			tools: parseToolList(frontmatter.tools),
 			model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
+			thinking: typeof frontmatter.thinking === "string" ? frontmatter.thinking : undefined,
+			contextFiles: frontmatter.contextFiles === false ? false : undefined,
 			systemPrompt: body,
 			source,
 			filePath,

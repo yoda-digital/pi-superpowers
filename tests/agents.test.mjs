@@ -36,6 +36,8 @@ function parseFrontmatter(content) {
     let value = kv[2].trim();
     if (value.startsWith("[") && value.endsWith("]")) {
       value = value.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+    } else if (value === "true" || value === "false") {
+      value = value === "true";
     }
     frontmatter[kv[1]] = value;
   }
@@ -88,6 +90,19 @@ describe("loadAgentsFromDir", () => {
     assert.equal(a.source, "user");
     assert.equal(a.filePath, join(tempDir, "scout.md"));
     assert.match(a.systemPrompt, /Body text/);
+  });
+
+  it("loads thinking, a tier name as model, and the contextFiles opt-out", () => {
+    writeAgent(tempDir, "r.md", { name: "r", description: "d", model: "top", thinking: "high", contextFiles: "false" });
+    const [a] = loadAgentsFromDir(tempDir, "user", parseFrontmatter);
+    assert.equal(a.model, "top");
+    assert.equal(a.thinking, "high");
+    assert.equal(a.contextFiles, false);
+  });
+
+  it("only an explicit contextFiles: false opts out of context files", () => {
+    writeAgent(tempDir, "r.md", { name: "r", description: "d", contextFiles: "true" });
+    assert.equal(loadAgentsFromDir(tempDir, "user", parseFrontmatter)[0].contextFiles, undefined);
   });
 
   it("leaves tools and model undefined when absent", () => {
@@ -178,8 +193,12 @@ describe("shipped agent definitions", () => {
   it("all load", () => {
     assert.deepEqual(
       agents.map((a) => a.name).sort(),
-      ["debugger", "implementer", "planner", "researcher", "reviewer", "scout"],
+      ["debugger", "general-purpose", "implementer", "planner", "researcher", "reviewer", "scout"],
     );
+  });
+
+  it("general-purpose allows every tool (Superpowers templates need edit, write and bash)", () => {
+    assert.equal(agents.find((a) => a.name === "general-purpose").tools, undefined);
   });
 
   it("each carries a real system prompt body", () => {
